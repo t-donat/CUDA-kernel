@@ -3,8 +3,9 @@
 //#define N 8
 //#define M 4
 
-__global__ void forward(const int N, const int M, const int *W, const int *X, int *Z) {
-    extern __shared__ int shared_data[];
+template<typename T>
+__global__ void forward(const int N, const int M, const T *W, const T *X, T *Z) {
+    extern __shared__ T shared_data[];
 
     int tID = threadIdx.x;
     int inputID =  blockIdx.x * 2 * blockDim.x+ threadIdx.x;
@@ -28,6 +29,7 @@ __global__ void forward(const int N, const int M, const int *W, const int *X, in
 
 }
 
+/*
 __device__ void warpReduce(volatile int* temp, int tID) {
     //Manually unrolling the last 6 for-loop iterations since they only happen on a single warp
     //This removes the need for syncthreads and frees up all other warps
@@ -39,6 +41,7 @@ __device__ void warpReduce(volatile int* temp, int tID) {
     temp[tID] += temp[tID + 2];
     temp[tID] += temp[tID + 1];
 }
+ */
 
 int main() {
     int N = 8;
@@ -53,8 +56,8 @@ int main() {
                     -6, -23, -8, -10,
                     -13, 22, 22, -5};
 
-
-    int *Z;//, *W;
+    int *Z;
+    //float *Z, *W;
     int *dev_X, *dev_Z, *dev_W;
 
     // allocate memory
@@ -63,7 +66,7 @@ int main() {
 
     // flatten the matrix to avoid difficulty with copying 2D array to Device
     /*for (int i = 0; i < N * M; i++) {
-        W[i] = 1;
+        W[i] = 1.0f;
     }*/
 
     int X[M];
@@ -72,7 +75,7 @@ int main() {
             X[i] = 1;
     }
 
-    //X[2] = 0;
+    //X[2] = 0.0;
     //X[0] = 0;
 
     cudaMalloc((void **)&dev_X, M * sizeof(int));
@@ -89,7 +92,7 @@ int main() {
     size_t sharedMemSize = M * sizeof(int);
 
     // launch kernel
-    forward<<<gridSize, blockSize, sharedMemSize>>>(N, M, dev_W, dev_X, dev_Z);
+    forward<int><<<gridSize, blockSize, sharedMemSize>>>(N, M, dev_W, dev_X, dev_Z);
 
     // copy data back to device
     cudaMemcpy(Z, dev_Z, N * sizeof(int), cudaMemcpyDeviceToHost);
@@ -99,6 +102,7 @@ int main() {
     }
 
     free(Z);
+    //free(W);
     cudaFree(dev_X);
     cudaFree(dev_W);
     cudaFree(dev_Z);
