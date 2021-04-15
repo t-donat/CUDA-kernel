@@ -13,7 +13,9 @@ __global__ void forward(const int N, const int M, const T *W, const T *X, T *Z) 
     int inputID =  blockIdx.x * 2 * blockDim.x+ threadIdx.x;
     int outputID = blockIdx.x;
 
-    shared_data[tID] = W[inputID] * X[tID] + W[inputID + blockDim.x] * X[tID + blockDim.x];
+    if ((tID < M/2) & (inputID < N * M)) {
+        shared_data[tID] = W[inputID] * X[tID] + W[inputID + blockDim.x] * X[tID + blockDim.x];
+    }
 
     __syncthreads();
 
@@ -62,7 +64,7 @@ int main() {
     int *dev_X, *dev_Z, *dev_W;
 
 
-    // flatten the matrix to avoid difficulty with copying 2D array to Device
+    // Test Case: matrix of floats
     /*for (int i = 0; i < N * M; i++) {
         W[i] = 1.0f;
     }*/
@@ -86,7 +88,7 @@ int main() {
     // specify device parameters
     dim3 blockSize = dim3((M+1)/2, 1, 1);
     dim3 gridSize = dim3(N, 1, 1);
-    size_t sharedMemSize = M * sizeof(int);
+    size_t sharedMemSize = M/2 * sizeof(int);
 
     // launch kernel
     forward<int><<<gridSize, blockSize, sharedMemSize>>>(N, M, dev_W, dev_X, dev_Z);
@@ -94,8 +96,10 @@ int main() {
     // copy data back to device
     cudaMemcpy(Z, dev_Z, N * sizeof(int), cudaMemcpyDeviceToHost);
 
+
+    // write results to results.txt
     std::ofstream ResultFile;
-    ResultFile.open("result.txt");
+    ResultFile.open("results.txt");
 
     for (int k = 0; k < N; k++) {
         ResultFile << "Z[" << k << "]: " << Z[k] << std::endl;
@@ -103,6 +107,7 @@ int main() {
 
     ResultFile.close();
 
+    // free Device memory
     cudaFree(dev_X);
     cudaFree(dev_W);
     cudaFree(dev_Z);
