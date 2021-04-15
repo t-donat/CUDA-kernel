@@ -2,19 +2,20 @@
 #include <iostream>
 #include <fstream>
 
-//#define N 8
-//#define M 4
 
 template<typename T>
-__global__ void forward(const int N, const int M, const T *W, const T *X, T *Z) {
+__global__ void forward(const int N, const int K, const int M, const T *W, const T *X, T *Z) {
     extern __shared__ T shared_data[];
 
     int tID = threadIdx.x;
-    int inputID =  blockIdx.x * 2 * blockDim.x+ threadIdx.x;
-    int outputID = blockIdx.x;
+    int weightsID =  blockIdx.x * K + tID;
+    int dataID = M * tID + blockIdx.y;
 
-    if ((tID < M/2) & (inputID < N * M)) {
-        shared_data[tID] = W[inputID] * X[tID] + W[inputID + blockDim.x] * X[tID + blockDim.x];
+    int outputID_x = blockIdx.x;
+    int outputID_y = blockIdx.y;
+
+    if ((dataID < K * M) && (weightsID < N * K)) {
+        shared_data[tID] = W[weightsID] * X[dataID];
     }
 
     __syncthreads();
@@ -28,7 +29,7 @@ __global__ void forward(const int N, const int M, const T *W, const T *X, T *Z) 
 
     if (tID == 0) {
 
-        Z[outputID] = shared_data[0];
+        Z[M * outputID_x + outputID_y] = shared_data[0];
     }
 
 }
@@ -49,10 +50,12 @@ __device__ void warpReduce(volatile int* temp, int tID) {
 
 int main() {
     int N = 8;
-    int M = 4;
+    int K = 4;
+    int M = 2;
 
-    int X[M], Z[N];
-    int W[N * M] = {-16, 2, 12, -16,
+    int W[N * K], X[K * M], Z[N * M];
+
+    /*int W[N * K] = {-16, 2, 12, -16,
                     -11, -3, -11, 13,
                     25, 17, -4, 20,
                     13, -9, -6, -3,
@@ -60,49 +63,50 @@ int main() {
                     8, -20, 2, -22,
                     -6, -23, -8, -10,
                     -13, 22, 22, -5};
+    */
 
     int *dev_X, *dev_Z, *dev_W;
 
-
-    // Test Case: matrix of floats
-    /*for (int i = 0; i < N * M; i++) {
-        W[i] = 1.0f;
-    }*/
-
-
-    for (int i = 0; i < M; i++) {
-        X[i] = 1;
+    // Test Case: matrix of ints
+    for (int i = 0; i < N * K; i++) {
+        W[i] = 1;
     }
 
-    //X[2] = 0.0;
-    //X[0] = 0;
+    for (int i = 0; i < K; i++) {
+        X[M*i] = 1;
+        X[M*i + 1] = 0;
+    }
 
-    cudaMalloc((void **)&dev_X, M * sizeof(int));
-    cudaMalloc((void **)&dev_W, N * M * sizeof(int));
-    cudaMalloc((void **)&dev_Z, N * sizeof(int));
+    cudaMalloc((void **)&dev_X, K * M * sizeof(int));
+    cudaMalloc((void **)&dev_W, N * K * sizeof(int));
+    cudaMalloc((void **)&dev_Z, N * M * sizeof(int));
 
     // copy data from host to device
-    cudaMemcpy(dev_X, X, M * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_W, W, N * M * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_X, X, K * M * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_W, W, N * K * sizeof(int), cudaMemcpyHostToDevice);
 
     // specify device parameters
-    dim3 blockSize = dim3((M+1)/2, 1, 1);
-    dim3 gridSize = dim3(N, 1, 1);
-    size_t sharedMemSize = M/2 * sizeof(int);
+    dim3 blockSize = dim3(K, 1, 1);
+    dim3 gridSize = dim3(N, M, 1);
+    size_t sharedMemSize = K * sizeof(int);
+
 
     // launch kernel
-    forward<int><<<gridSize, blockSize, sharedMemSize>>>(N, M, dev_W, dev_X, dev_Z);
+    forward<int><<<gridSize, blockSize, sharedMemSize>>>(N, K, M, dev_W, dev_X, dev_Z);
 
     // copy data back to device
-    cudaMemcpy(Z, dev_Z, N * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(Z, dev_Z, N * M * sizeof(int), cudaMemcpyDeviceToHost);
 
 
     // write results to results.txt
     std::ofstream ResultFile;
     ResultFile.open("results.txt");
 
-    for (int k = 0; k < N; k++) {
-        ResultFile << "Z[" << k << "]: " << Z[k] << std::endl;
+    for (int l = 0; l < M; l++) {
+        for (int k = 0; k < N; k++) {
+
+            ResultFile << "Z[" << k << "][" << l <<"]: " << Z[k * M + l] << std::endl;
+        }
     }
 
     ResultFile.close();
