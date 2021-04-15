@@ -1,4 +1,6 @@
 #include "stdio.h"
+#include <iostream>
+#include <fstream>
 
 //#define N 8
 //#define M 4
@@ -47,6 +49,7 @@ int main() {
     int N = 8;
     int M = 4;
 
+    int X[M], Z[N];
     int W[N * M] = {-16, 2, 12, -16,
                     -11, -3, -11, 13,
                     25, 17, -4, 20,
@@ -56,23 +59,17 @@ int main() {
                     -6, -23, -8, -10,
                     -13, 22, 22, -5};
 
-    int *Z;
-    //float *Z, *W;
     int *dev_X, *dev_Z, *dev_W;
 
-    // allocate memory
-    Z = (int *)malloc(N * sizeof(int));
-    //W = (int *)malloc(N * M * sizeof(int));
 
     // flatten the matrix to avoid difficulty with copying 2D array to Device
     /*for (int i = 0; i < N * M; i++) {
         W[i] = 1.0f;
     }*/
 
-    int X[M];
 
     for (int i = 0; i < M; i++) {
-            X[i] = 1;
+        X[i] = 1;
     }
 
     //X[2] = 0.0;
@@ -97,12 +94,15 @@ int main() {
     // copy data back to device
     cudaMemcpy(Z, dev_Z, N * sizeof(int), cudaMemcpyDeviceToHost);
 
+    std::ofstream ResultFile;
+    ResultFile.open("result.txt");
+
     for (int k = 0; k < N; k++) {
-        printf("Z[%d]: %d\n", k, Z[k]);
+        ResultFile << "Z[" << k << "]: " << Z[k] << std::endl;
     }
 
-    free(Z);
-    //free(W);
+    ResultFile.close();
+
     cudaFree(dev_X);
     cudaFree(dev_W);
     cudaFree(dev_Z);
