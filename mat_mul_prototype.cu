@@ -8,14 +8,20 @@
 template <typename T>
 void result_to_csv(T *result, const int N, const int M) {
     std::ofstream ResultFile;
-    ResultFile.open("./data/outputs/calculated_results.csv");
+    ResultFile.open("./data/outputs/calculated_result.csv");
     
     for (int k = 0; k < N; k++) {
         for (int l = 0; l < M; l++) {
 
-            ResultFile << result[k * M + l] << ",";
+            ResultFile << result[k * M + l];
+
+            if (l < M-1) {
+                ResultFile << ",";
+            }
+            else {
+                ResultFile << "\n";
+            }
         }
-        ResultFile << "\n";
     }
 
     ResultFile.close();
