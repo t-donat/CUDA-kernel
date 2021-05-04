@@ -5,10 +5,20 @@
 #include <sstream>
 #include <string>
 
+#include "cuda_profiler_api.h"
 #include "kernel_definitions.h"
 
 __host__ __device__ bool readBinArray(const uint8_t *array, const int index) {
     return ((uint8_t)array[index/8] >> (index % 8)) & 1UL;
+}
+
+__device__ void warpReduce(volatile float *shared_data, int tID, int blockSize) {
+    if (blockSize >= 64) { shared_data[tID] += shared_data[tID + 32]; }
+    if (blockSize >= 32) { shared_data[tID] += shared_data[tID + 16]; }
+    if (blockSize >= 16) { shared_data[tID] += shared_data[tID + 8]; }
+    if (blockSize >= 8) { shared_data[tID] += shared_data[tID + 4]; }
+    if (blockSize >= 4) { shared_data[tID] += shared_data[tID + 2]; }
+    if (blockSize >= 2) { shared_data[tID] += shared_data[tID + 1]; }
 }
 
 __global__ void float_inner_kernel(const int N, const int K, const int M, const float *W, const float *X, float *Z) {
@@ -20,8 +30,6 @@ __global__ void float_inner_kernel(const int N, const int K, const int M, const 
 
     int outputID_x = blockIdx.x;
     int outputID_y = blockIdx.y;
-
-    // int num_threads = K/2;
 
     /* SegFault guards:
      * dataID: K*M long, access element i and i + K*M/2
@@ -36,44 +44,21 @@ __global__ void float_inner_kernel(const int N, const int K, const int M, const 
 
     __syncthreads();
 
+    if (blockDim.x >= 1024) { if (tID < 512) { shared_data[tID] += shared_data[tID + 512]; } __syncthreads(); }
+    if (blockDim.x >= 512) { if (tID < 256) { shared_data[tID] += shared_data[tID + 256]; } __syncthreads(); }
+    if (blockDim.x >= 256) { if (tID < 128) { shared_data[tID] += shared_data[tID + 128]; } __syncthreads(); }
+    if (blockDim.x >= 128) { if (tID < 64) { shared_data[tID] += shared_data[tID + 64]; } __syncthreads(); }
+
     /*
-    if (num_threads >= 1024) {
-        shared_data[tID] += shared_data[tID + 512];
-        __syncthreads();
-    }
-
-    if (num_threads >= 512) {
-        shared_data[tID] += shared_data[tID + 256];
-        __syncthreads();
-    }
-
-    if (num_threads >= 256) {
-        shared_data[tID] += shared_data[tID + 128];
-        __syncthreads();
-    }
-
-    if (num_threads >= 128) {
-        shared_data[tID] += shared_data[tID + 64];
-        __syncthreads();
-    }
-    */
-    for (unsigned int i = blockDim.x/2; i > 0; i >>= 1) {
+    for (unsigned int i = blockDim.x/2; i > 32; i >>= 1) {
         if (tID < i) {
             shared_data[tID] += shared_data[tID + i];
         }
         __syncthreads();
     }
-    /*
-    if (tID < 32) {
-
-        if (num_threads >= 64) shared_data[tID] += shared_data[tID + 32];
-        if (num_threads >= 32) shared_data[tID] += shared_data[tID + 16];
-        if (num_threads >= 16) shared_data[tID] += shared_data[tID + 8];
-        if (num_threads >= 8) shared_data[tID] += shared_data[tID + 4];
-        if (num_threads >= 4) shared_data[tID] += shared_data[tID + 2];
-        if (num_threads >= 2) shared_data[tID] += shared_data[tID + 1];
-    }
     */
+
+    if (tID < 32) { warpReduce(shared_data, tID, blockDim.x); }
 
     if (tID == 0) {
 
@@ -96,7 +81,7 @@ void cuda_float_inner(const int N, const int K, const int M, const float *W, con
     // specify device parameters
     dim3 blockSize = dim3(K/2, 1, 1);
     dim3 gridSize = dim3(N, M, 1);
-    size_t sharedMemSize = K * sizeof(float);
+    size_t sharedMemSize = K/2 * sizeof(float);
 
 
     // launch kernel
@@ -121,8 +106,6 @@ __global__ void bool_inner_kernel(const int N, const int K, const int M, const f
     int outputID_x = blockIdx.x;
     int outputID_y = blockIdx.y;
 
-    // int num_threads = K/2;
-
     /* SegFault guards:
      * dataID: K*M long, access element i and i + K*M/2
      * guard: K*M - K*M/2 = K*M/2
@@ -137,50 +120,28 @@ __global__ void bool_inner_kernel(const int N, const int K, const int M, const f
 
     __syncthreads();
 
+    if (blockDim.x >= 1024) { if (tID < 512) { shared_data[tID] += shared_data[tID + 512]; } __syncthreads(); }
+    if (blockDim.x >= 512) { if (tID < 256) { shared_data[tID] += shared_data[tID + 256]; } __syncthreads(); }
+    if (blockDim.x >= 256) { if (tID < 128) { shared_data[tID] += shared_data[tID + 128]; } __syncthreads(); }
+    if (blockDim.x >= 128) { if (tID < 64) { shared_data[tID] += shared_data[tID + 64]; } __syncthreads(); }
+
+
     /*
-    if (num_threads >= 1024) {
-        shared_data[tID] += shared_data[tID + 512];
-        __syncthreads();
-    }
-
-    if (num_threads >= 512) {
-        shared_data[tID] += shared_data[tID + 256];
-        __syncthreads();
-    }
-
-    if (num_threads >= 256) {
-        shared_data[tID] += shared_data[tID + 128];
-        __syncthreads();
-    }
-
-    if (num_threads >= 128) {
-        shared_data[tID] += shared_data[tID + 64];
-        __syncthreads();
-    }
-    */
-    for (unsigned int i = blockDim.x/2; i > 0; i >>= 1) {
+    for (unsigned int i = blockDim.x/2; i > 32; i >>= 1) {
         if (tID < i) {
             shared_data[tID] += shared_data[tID + i];
         }
         __syncthreads();
     }
-    /*
-    if (tID < 32) {
-
-        if (num_threads >= 64) shared_data[tID] += shared_data[tID + 32];
-        if (num_threads >= 32) shared_data[tID] += shared_data[tID + 16];
-        if (num_threads >= 16) shared_data[tID] += shared_data[tID + 8];
-        if (num_threads >= 8) shared_data[tID] += shared_data[tID + 4];
-        if (num_threads >= 4) shared_data[tID] += shared_data[tID + 2];
-        if (num_threads >= 2) shared_data[tID] += shared_data[tID + 1];
-    }
     */
+
+    if (tID < 32) { warpReduce(shared_data, tID, blockDim.x); }
+
 
     if (tID == 0) {
 
         Z[M * outputID_x + outputID_y] = shared_data[0];
     }
-
 }
 
 void cuda_bool_inner(const int N, const int K, const int M, const float *W, const uint8_t *X, float *Z) {
@@ -198,7 +159,7 @@ void cuda_bool_inner(const int N, const int K, const int M, const float *W, cons
     // specify device parameters
     dim3 blockSize = dim3(K/2, 1, 1);
     dim3 gridSize = dim3(N, M, 1);
-    size_t sharedMemSize = K * sizeof(float);
+    size_t sharedMemSize = K/2 * sizeof(float);
 
 
     // launch kernel
@@ -214,9 +175,9 @@ void cuda_bool_inner(const int N, const int K, const int M, const float *W, cons
 }
 
 int main() {
-    const int N = 8;
-    const int K = 4;
-    const int M = 2;
+    const int N = 512;
+    const int K = 256;
+    const int M = 512;
 
     float W[N * K], X[K * M], Z[N * M], Z_binary[N * M];
 
