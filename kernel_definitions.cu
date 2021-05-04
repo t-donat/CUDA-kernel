@@ -5,64 +5,11 @@
 #include <sstream>
 #include <string>
 
-template <typename T>
-void result_to_csv(T *result, const int N, const int M, const char *filename) {
-    std::ofstream ResultFile;
-    ResultFile.open(filename);
+#include "kernel_definitions.h"
 
-    for (int k = 0; k < N; k++) {
-        for (int l = 0; l < M; l++) {
-
-            ResultFile << result[k * M + l];
-
-            if (l < M-1) {
-                ResultFile << ",";
-            }
-            else {
-                ResultFile << "\n";
-            }
-        }
-    }
-
-    ResultFile.close();
-/*
-    for (int i = 0; i < N * M; ++i) {
-        std::cout << result[i];
-        if (i%M == M-1) {
-            std::cout << std::endl;
-        }
-
-        else {
-            std::cout << ", ";
-        }
-    }
-*/
+__host__ __device__ bool readBinArray(const uint8_t *array, const int index) {
+    return ((uint8_t)array[index/8] >> (index % 8)) & 1UL;
 }
-
-template<typename T>
-void read_csv_to_array(T *result_array, const int N, const int M, const char *filename) {
-    std::ifstream target_file;
-    target_file.open(filename);
-
-    char temp_for_delimiter;
-    std::string file_line;
-
-    if (target_file.good()) {
-        for (int j = 0; j < N; ++j) {
-            std::getline(target_file, file_line);
-            std::stringstream iss(file_line);
-            iss >> result_array[j * M];
-
-            for (int i = 1; i < M; ++i) {
-                iss >> temp_for_delimiter >> result_array[j * M + i];
-            }
-        }
-    }
-
-    target_file.close();
-
-}
-
 
 __global__ void float_inner_kernel(const int N, const int K, const int M, const float *W, const float *X, float *Z) {
     extern __shared__ float shared_data[];
@@ -74,18 +21,59 @@ __global__ void float_inner_kernel(const int N, const int K, const int M, const 
     int outputID_x = blockIdx.x;
     int outputID_y = blockIdx.y;
 
-    if ((dataID < K * M) && (weightsID < N * K)) {
-        shared_data[tID] = W[weightsID] * X[dataID];
+    // int num_threads = K/2;
+
+    /* SegFault guards:
+     * dataID: K*M long, access element i and i + K*M/2
+     * guard: K*M - K*M/2 = K*M/2
+     *
+     *  weightsID: N*K long, access element j and j+K/2
+     *  guard: N*K - K/2
+     */
+    if ((dataID < K * M/2) && (weightsID < (N * K - K/2))) {
+        shared_data[tID] = W[weightsID] * X[dataID] + W[weightsID + int(K/2)] * X[dataID + int(M*K/2)];
     }
 
     __syncthreads();
 
+    /*
+    if (num_threads >= 1024) {
+        shared_data[tID] += shared_data[tID + 512];
+        __syncthreads();
+    }
+
+    if (num_threads >= 512) {
+        shared_data[tID] += shared_data[tID + 256];
+        __syncthreads();
+    }
+
+    if (num_threads >= 256) {
+        shared_data[tID] += shared_data[tID + 128];
+        __syncthreads();
+    }
+
+    if (num_threads >= 128) {
+        shared_data[tID] += shared_data[tID + 64];
+        __syncthreads();
+    }
+    */
     for (unsigned int i = blockDim.x/2; i > 0; i >>= 1) {
         if (tID < i) {
             shared_data[tID] += shared_data[tID + i];
         }
         __syncthreads();
     }
+    /*
+    if (tID < 32) {
+
+        if (num_threads >= 64) shared_data[tID] += shared_data[tID + 32];
+        if (num_threads >= 32) shared_data[tID] += shared_data[tID + 16];
+        if (num_threads >= 16) shared_data[tID] += shared_data[tID + 8];
+        if (num_threads >= 8) shared_data[tID] += shared_data[tID + 4];
+        if (num_threads >= 4) shared_data[tID] += shared_data[tID + 2];
+        if (num_threads >= 2) shared_data[tID] += shared_data[tID + 1];
+    }
+    */
 
     if (tID == 0) {
 
@@ -106,9 +94,10 @@ void cuda_float_inner(const int N, const int K, const int M, const float *W, con
     cudaMemcpy(dev_W, W, N * K * sizeof(float), cudaMemcpyHostToDevice);
 
     // specify device parameters
-    dim3 blockSize = dim3(K, 1, 1);
+    dim3 blockSize = dim3(K/2, 1, 1);
     dim3 gridSize = dim3(N, M, 1);
     size_t sharedMemSize = K * sizeof(float);
+
 
     // launch kernel
     float_inner_kernel<<<gridSize, blockSize, sharedMemSize>>>(N, K, M, dev_W, dev_X, dev_Z);
@@ -122,19 +111,131 @@ void cuda_float_inner(const int N, const int K, const int M, const float *W, con
     cudaFree(dev_Z);
 }
 
+__global__ void bool_inner_kernel(const int N, const int K, const int M, const float *W, const uint8_t *X, float *Z) {
+    extern __shared__ float shared_data[];
+
+    int tID = threadIdx.x;
+    int weightsID =  blockIdx.x * K + tID;
+    int dataID = M * tID + blockIdx.y;
+
+    int outputID_x = blockIdx.x;
+    int outputID_y = blockIdx.y;
+
+    // int num_threads = K/2;
+
+    /* SegFault guards:
+     * dataID: K*M long, access element i and i + K*M/2
+     * guard: K*M - K*M/2 = K*M/2
+     *
+     *  weightsID: N*K long, access element j and j+K/2
+     *  guard: N*K - K/2
+     */
+    if ((dataID < K * M/2) && (weightsID < (N * K - K/2))) {
+        shared_data[tID] = W[weightsID] * readBinArray(X, dataID) +
+                W[weightsID + int(K/2)] * readBinArray(X, dataID + int(M*K/2));
+    }
+
+    __syncthreads();
+
+    /*
+    if (num_threads >= 1024) {
+        shared_data[tID] += shared_data[tID + 512];
+        __syncthreads();
+    }
+
+    if (num_threads >= 512) {
+        shared_data[tID] += shared_data[tID + 256];
+        __syncthreads();
+    }
+
+    if (num_threads >= 256) {
+        shared_data[tID] += shared_data[tID + 128];
+        __syncthreads();
+    }
+
+    if (num_threads >= 128) {
+        shared_data[tID] += shared_data[tID + 64];
+        __syncthreads();
+    }
+    */
+    for (unsigned int i = blockDim.x/2; i > 0; i >>= 1) {
+        if (tID < i) {
+            shared_data[tID] += shared_data[tID + i];
+        }
+        __syncthreads();
+    }
+    /*
+    if (tID < 32) {
+
+        if (num_threads >= 64) shared_data[tID] += shared_data[tID + 32];
+        if (num_threads >= 32) shared_data[tID] += shared_data[tID + 16];
+        if (num_threads >= 16) shared_data[tID] += shared_data[tID + 8];
+        if (num_threads >= 8) shared_data[tID] += shared_data[tID + 4];
+        if (num_threads >= 4) shared_data[tID] += shared_data[tID + 2];
+        if (num_threads >= 2) shared_data[tID] += shared_data[tID + 1];
+    }
+    */
+
+    if (tID == 0) {
+
+        Z[M * outputID_x + outputID_y] = shared_data[0];
+    }
+
+}
+
+void cuda_bool_inner(const int N, const int K, const int M, const float *W, const uint8_t *X, float *Z) {
+    float *dev_Z, *dev_W;
+    uint8_t *dev_X;
+
+    cudaMalloc((void **)&dev_X, (K * M + 7)/8 * sizeof(uint8_t));
+    cudaMalloc((void **)&dev_W, N * K * sizeof(float));
+    cudaMalloc((void **)&dev_Z, N * M * sizeof(float));
+
+    // copy data from host to device
+    cudaMemcpy(dev_X, X, (K * M + 7)/8 * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_W, W, N * K * sizeof(float), cudaMemcpyHostToDevice);
+
+    // specify device parameters
+    dim3 blockSize = dim3(K/2, 1, 1);
+    dim3 gridSize = dim3(N, M, 1);
+    size_t sharedMemSize = K * sizeof(float);
+
+
+    // launch kernel
+    bool_inner_kernel<<<gridSize, blockSize, sharedMemSize>>>(N, K, M, dev_W, dev_X, dev_Z);
+
+    // copy data back to device
+    cudaMemcpy(Z, dev_Z, N * M * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // free Device memory
+    cudaFree(dev_X);
+    cudaFree(dev_W);
+    cudaFree(dev_Z);
+}
+
 int main() {
-    int N = 64;
-    int K = 32;
-    int M = 64;
+    const int N = 8;
+    const int K = 4;
+    const int M = 2;
 
-    float W[N * K], X[K * M], Z[N * M];
+    float W[N * K], X[K * M], Z[N * M], Z_binary[N * M];
 
-    read_csv_to_array<float>(W, N, K, "./data/inputs/W.csv");
-    read_csv_to_array<float>(X, K, M, "./data/inputs/X.csv");
+    uint8_t X_binary[(K * M +7)/8];
+    memset(X_binary, 0, (K * M +7)/8 * sizeof(uint8_t));
+
+    read_csv_to_array<float>(W, N, K, "./data/inputs/W_test.csv");
+    read_csv_to_array<float>(X, K, M, "./data/inputs/X_test.csv");
+
+    for (int i = 0; i < K * M; ++i) {
+        X_binary[i/8] |= ((unsigned int)X[i] << (i % 8));
+    }
 
     cuda_float_inner(N, K, M, W, X, Z);
+    cuda_bool_inner(N, K, M, W, X_binary, Z_binary);
 
     result_to_csv<float>(Z, N, M, "./data/outputs/calculated_result.csv");
+    result_to_csv<float>(Z_binary, N, M, "./data/outputs/calculated_result_binary.csv");
+
 
     return 0;
 }
@@ -143,16 +244,4 @@ int main() {
 
 
 
-/*
-__device__ void warpReduce(volatile int* temp, int tID) {
-    //Manually unrolling the last 6 for-loop iterations since they only happen on a single warp
-    //This removes the need for syncthreads and frees up all other warps
 
-    temp[tID] += temp[tID + 32];
-    temp[tID] += temp[tID + 16];
-    temp[tID] += temp[tID + 8];
-    temp[tID] += temp[tID + 4];
-    temp[tID] += temp[tID + 2];
-    temp[tID] += temp[tID + 1];
-}
-*/
