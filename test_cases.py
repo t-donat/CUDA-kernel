@@ -13,19 +13,21 @@ for file in output_folder.glob("*.csv"):
     print("--------------------------------------")
 
     try:
-        correct_result = np.isclose(calculated_result, expected_result).all()
+        result_is_correct = np.isclose(calculated_result, expected_result).all()
     except ValueError as value_err:
         print("Matrix dimension missmatch!")
         print(f"Message: {value_err}")
-        correct_result = False
+        result_is_correct = False
 
-    if correct_result:
+    if result_is_correct:
         print("Passed!")
 
     else:
         print("Failed!")
+        print(np.where(np.invert(np.isclose(calculated_result, expected_result))))
+        print((calculated_result-expected_result)[np.invert(np.isclose(calculated_result, expected_result))])
 
-    successes.append(correct_result)
+    successes.append(result_is_correct)
     print("--------------------------------------\n")
 
 if all(successes):
