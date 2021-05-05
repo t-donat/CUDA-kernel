@@ -17,5 +17,6 @@ Additionally, I developed a second kernel idential to the first. The only differ
 Unexpectedly, this did not only improve the time required for copying data from the Host to the Device, but also drastically cut the computation time of the kernel by about 30%. I assue this is caused by the higher information density of the bit array, which leads to fewer cache misses.
 
 
-
-
+<p align="center">
+  <img src="./doc/images/mat_mul_inner_comparrison.jpeg" width="300" height="400">
+</p>
