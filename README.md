@@ -1,6 +1,7 @@
 # CUDA-kernel
 
-## `kernel_definitions.cu`
+## branch `prototype`
+### `kernel_definitions.cu`
 
 This is my first protype for matrix multiplication implemented in CUDA. 
 
@@ -20,3 +21,5 @@ Unexpectedly, this did not only improve the time required for copying data from 
 <p align="center">
   <img src="./doc/images/mat_mul_inner_comparrison.jpeg" width="300" height="400">
 </p>
+
+## branch `cutlass`
