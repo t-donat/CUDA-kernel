@@ -137,7 +137,6 @@ __global__ void bool_inner_kernel(const int N, const int K, const int M, const f
 
     if (tID < 32) { warpReduce(shared_data, tID, blockDim.x); }
 
-
     if (tID == 0) {
 
         Z[M * outputID_x + outputID_y] = shared_data[0];
@@ -175,9 +174,9 @@ void cuda_bool_inner(const int N, const int K, const int M, const float *W, cons
 }
 
 int main() {
-    const int N = 512;
-    const int K = 256;
-    const int M = 512;
+    const int N = 8;
+    const int K = 4;
+    const int M = 2;
 
     float W[N * K], X[K * M], Z[N * M], Z_binary[N * M];
 
