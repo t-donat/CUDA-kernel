@@ -24,6 +24,8 @@ __device__ void warpReduce(volatile float *shared_data, int tID, int blockSize) 
 __global__ void float_inner_kernel(const int N, const int K, const int M, const float *W, const float *X, float *Z) {
     extern __shared__ float shared_data[];
 
+    printf("In the kernel");
+
     int tID = threadIdx.x;
     int weightsID =  blockIdx.x * K + tID;
     int dataID = M * tID + blockIdx.y;
@@ -44,6 +46,9 @@ __global__ void float_inner_kernel(const int N, const int K, const int M, const 
 
     __syncthreads();
 
+    if (threadIdx.x == 0) {
+        printf("%f\n", shared_data[tID]);
+    }
     if (blockDim.x >= 1024) { if (tID < 512) { shared_data[tID] += shared_data[tID + 512]; } __syncthreads(); }
     if (blockDim.x >= 512) { if (tID < 256) { shared_data[tID] += shared_data[tID + 256]; } __syncthreads(); }
     if (blockDim.x >= 256) { if (tID < 128) { shared_data[tID] += shared_data[tID + 128]; } __syncthreads(); }
@@ -58,7 +63,15 @@ __global__ void float_inner_kernel(const int N, const int K, const int M, const 
     }
     */
 
+    if (threadIdx.x == 0) {
+        printf("%f\n", shared_data[tID]);
+    }
     if (tID < 32) { warpReduce(shared_data, tID, blockDim.x); }
+
+
+    if (threadIdx.x == 0) {
+        printf("%f\n", shared_data[tID]);
+    }
 
     if (tID == 0) {
 
@@ -69,6 +82,7 @@ __global__ void float_inner_kernel(const int N, const int K, const int M, const 
 
 void cuda_float_inner(const int N, const int K, const int M, const float *W, const float *X, float *Z) {
     float *dev_X, *dev_Z, *dev_W;
+    printf("In the cpp function");
 
     cudaMalloc((void **)&dev_X, K * M * sizeof(float));
     cudaMalloc((void **)&dev_W, N * K * sizeof(float));
