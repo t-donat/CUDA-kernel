@@ -19,7 +19,7 @@ Unexpectedly, this did not only improve the time required for copying data from 
 
 
 <p align="center">
-  <img src="./images/mat_mul_inner_comparrison.jpeg" width=420" height="400">
+  <img src="./images/mat_mul_inner_comparrison_new.png" width=420" height="400">
 </p>
 
 ## branch `cutlass`
