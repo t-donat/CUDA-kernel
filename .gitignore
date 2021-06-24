@@ -7,3 +7,5 @@
 test
 .idea
 cmake-build-debug
+a.out
+maxtrix_kernel.cc
