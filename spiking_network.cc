@@ -4,6 +4,8 @@
 
 #include "spiking_network.h"
 
+static cublasHandle_t cublas_handle;
+
 using namespace tensorflow;
 using GPUDevice = Eigen::GpuDevice;
 
@@ -18,10 +20,14 @@ REGISTER_OP("ForwardPass")
 
 class ForwardPassOp : public OpKernel {
 public:
-    explicit ForwardPassOp(OpKernelConstruction* context) : OpKernel(context) {}
+    explicit ForwardPassOp(OpKernelConstruction* context) : OpKernel(context) {
+        cublasCreate(&cublas_handle);
+    }
+
+    ~ForwardPassOp() override { cublasDestroy(cublas_handle); }
 
     void Compute(OpKernelContext* context) override {
-        // allocate input tensors
+        // allocate input tensors and get their contents
         const Tensor& W_in = context->input(0);
         const Tensor& W_rec = context->input(1);
         const Tensor& time_series_data = context->input(2);
@@ -32,6 +38,7 @@ public:
         float decay_factor = decay_factor_tensor.flat<float>()(0);
         float threshold_voltage = threshold_voltage_tensor.flat<float>()(0);
 
+        // get the values for the dimensions
         int num_neurons = static_cast<int>(W_rec.shape().dim_size(1));
         int num_time_steps = static_cast<int>(time_series_data.shape().dim_size(0));
         int num_input_channels = static_cast<int>(time_series_data.shape().dim_size(1));
@@ -45,10 +52,10 @@ public:
         OP_REQUIRES_OK(context, context->allocate_output(1, output_shape, &resulting_activities));
 
         // allocate temporary/intermediate tensors
-        // TODO ase_voltage_activity: allocate_persistent? allocate as Const class?
-        Tensor v_tensor, z_tensor ,current_input_tensor ,base_voltage_activity_tensor;
+        // TODO base_voltage_activity: allocate_persistent -> no? allocate as Const class?
+        Tensor v_tensor, z_tensor, current_input_tensor, base_voltage_activity_tensor;
 
-        // intermediate column vector shape for v and z
+        // shape of v and z in each time step
         TensorShape vector_shape({num_neurons, 1});
 
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, vector_shape, &v_tensor));
@@ -57,7 +64,6 @@ public:
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, output_shape, &base_voltage_activity_tensor));
 
         // initialize v & z to zeros
-
         auto v_flat = v_tensor.flat<float>();
         auto z_flat = z_tensor.flat<float>();
 
@@ -67,7 +73,9 @@ public:
         }
 
 
-        ForwardPass forward(num_neurons, num_input_channels, num_time_steps, decay_factor, threshold_voltage);
+        ForwardPass forward(cublas_handle,
+                            num_neurons, num_input_channels, num_time_steps,
+                            decay_factor, threshold_voltage);
 
         forward(context, context->eigen_gpu_device(),
                 W_in.flat<float>().data(), W_rec.flat<float>().data(),
