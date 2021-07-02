@@ -10,8 +10,6 @@
 #include "cuda_runtime_api.h"
 
 #include "cublas_v2.h"
-cublasHandle_t cublasHandle = NULL;
-
 
 using namespace tensorflow;
 
@@ -104,6 +102,20 @@ __global__ void CopyToOutput(const float* in, const int N, const int timestep, f
     }
 }
 
+ForwardPass::ForwardPass(cublasHandle_t cublas_handle,
+                         int num_neurons,
+                         int num_input_channels,
+                         int num_timesteps,
+                         float decay_factor,
+                         float threshold_voltage) :
+                            cublas_handle(cublas_handle),
+                            num_neurons(num_neurons),
+                            num_input_channels(num_input_channels),
+                            num_timesteps(num_timesteps),
+                            decay_factor(decay_factor),
+                            threshold_voltage(threshold_voltage)
+                         { };
+
 void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                              const float *W_in, const float *W_rec, float *v, float *z,
                              const float *timeseries_data, float *base_activity, float *current_input,
@@ -113,21 +125,10 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     static float beta = 0.0f;
     static cudaError_t exit_status;
 
-    if (cublasHandle == NULL) {
-    assert(cublasCreate_v2(&cublasHandle) == CUBLAS_STATUS_SUCCESS);
-    assert(cublasSetStream_v2(cublasHandle, device.stream()) == CUBLAS_STATUS_SUCCESS);
-    }
-    /*
-    static cublasHandle_t cublasHandle;
-    cudaStream_t save_stream;
+    cublasSetStream(cublas_handle, device.stream())
 
-    cublasCreate_v2(&cublasHandle);
-    cudaStreamCreate(&save_stream);
-     cublasSetStream_v2(cublasHandle, save_stream);
-    */
-    // Actual Computation
-
-    cublasSgemm_v2(cublasHandle,
+    // initial large GEMM of input time series data with input weights
+    cublasSgemm_v2(cublas_handle,
                    CUBLAS_OP_N, CUBLAS_OP_N,
                    num_neurons, num_timesteps, num_input_channels,
                    &alpha,
@@ -139,10 +140,11 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     dim3 kernelBlockSize(num_neurons, 1, 1);
     dim3 kernelGridSize(1, 1, 1);
 
+    // iterate though the time series
     for (int t = 0; t < num_timesteps; t++) {
         CopyToInput<<<kernelBlockSize, kernelGridSize, 0, device.stream()>>>(base_activity, num_neurons, t, current_input);
 
-        cublasSgemv_v2(cublasHandle,
+        cublasSgemv_v2(cublas_handle,
                        CUBLAS_OP_T,
                        num_neurons, num_neurons,
                        &alpha,
