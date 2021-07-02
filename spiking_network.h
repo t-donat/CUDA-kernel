@@ -4,11 +4,12 @@ using GPUDevice = Eigen::GpuDevice;
 
 struct ForwardPass {
 public:
-    ForwardPass(int num_neurons,
-                             int num_input_channels,
-                             int num_timesteps,
-                             float decay_factor,
-                             float threshold_voltage);
+    ForwardPass(cublasHandle_t cublas_handle,
+                int num_neurons,
+                int num_input_channels,
+                int num_timesteps,
+                float decay_factor,
+                float threshold_voltage);
 
     void operator()(::tensorflow::OpKernelContext* ctx, const GPUDevice &device,
                     const float *W_in, const float *W_rec, float *v, float *z,
@@ -16,10 +17,11 @@ public:
                     float *resulting_voltages, float *resulting_activities);
 
 private:
-    int num_neurons;
-    int num_input_channels;
-    int num_timesteps;
+    cublasHandle_t _cublas_handle;
+    int _num_neurons;
+    int _num_input_channels;
+    int _num_timesteps;
 
-    float threshold_voltage;
-    float decay_factor;
+    float _threshold_voltage;
+    float _decay_factor;
 };
