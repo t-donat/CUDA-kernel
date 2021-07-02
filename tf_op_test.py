@@ -3,14 +3,14 @@ import numpy as np
 
 recurrent_weights = np.random.randn(4, 4) * 0.05
 np.fill_diagonal(recurrent_weights, 0.0)
-recurrent_weights_tensor = tf.convert_to_tensor(recurrent_weights)
+recurrent_weights_tensor = tf.convert_to_tensor(recurrent_weights, dtype=float)
 
 input_weights = np.random.randn(2, 4) * 0.1
-input_weights_tensor = tf.convert_to_tensor(input_weights)
+input_weights_tensor = tf.convert_to_tensor(input_weights, dtype=float)
 
 x = np.arange(20)
 time_series_data = np.array([np.sin(np.pi*x/10), np.cos(np.pi*x/20)]).T
-time_series_data_tensor = tf.convert_to_tensor(time_series_data)
+time_series_data_tensor = tf.convert_to_tensor(time_series_data, dtype=float)
 
 decay_factor = 0.95
 threshold_voltage = 0.5
@@ -30,3 +30,4 @@ print("\n--------------------------\n")
 
 print("Neuron activities")
 print(resulting_activities.numpy())
+
