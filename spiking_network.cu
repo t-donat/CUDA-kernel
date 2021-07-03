@@ -102,6 +102,14 @@ __global__ void CopyToOutput(const float* in, const int N, const int timestep, f
     }
 }
 
+__global__ void SetToValue(float *in, const float value) {
+    int tID = blockDim.x * threadIdx.y + threadIdx.x;
+
+    if (tID < blockDim.x * blockDim.y) {
+        in[tID] = value;
+    }
+}
+
 ForwardPass::ForwardPass(cublasHandle_t cublas_handle,
                          int num_neurons,
                          int num_input_channels,
@@ -123,9 +131,16 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
 {
     static float alpha = 1.0f;
     static float beta = 0.0f;
-    static cudaError_t exit_status;
+    //static cudaError_t exit_status;
 
-    cublasSetStream(cublas_handle, device.stream())
+    dim3 kernelBlockSize(num_neurons, 1, 1);
+    dim3 kernelGridSize(1, 1, 1);
+
+    // set values of v and z to guarentee that they are initialized to 0
+    SetToValue<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, 0.0f);
+    SetToValue<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(z, 0.0f);
+
+    cublasSetStream(cublas_handle, device.stream());
 
     // initial large GEMM of input time series data with input weights
     cublasSgemm_v2(cublas_handle,
@@ -137,12 +152,11 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                    &beta,
                    base_activity, num_neurons);
 
-    dim3 kernelBlockSize(num_neurons, 1, 1);
-    dim3 kernelGridSize(1, 1, 1);
+
 
     // iterate though the time series
     for (int t = 0; t < num_timesteps; t++) {
-        CopyToInput<<<kernelBlockSize, kernelGridSize, 0, device.stream()>>>(base_activity, num_neurons, t, current_input);
+        CopyToInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(base_activity, num_neurons, t, current_input);
 
         cublasSgemv_v2(cublas_handle,
                        CUBLAS_OP_T,
@@ -153,11 +167,11 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                        &decay_factor,
                        v, 1);
 
-        MembraneVoltageUpdateRule<<<kernelBlockSize, kernelGridSize, 0, device.stream()>>>(v, z, current_input, num_neurons, threshold_voltage);
-        NeuronActivationUpdateRule<<<kernelBlockSize, kernelGridSize, 0, device.stream()>>>(v, num_neurons, threshold_voltage, z);
+        MembraneVoltageUpdateRule<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, z, current_input, num_neurons, threshold_voltage);
+        NeuronActivationUpdateRule<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, num_neurons, threshold_voltage, z);
 
-        CopyToOutput<<<kernelBlockSize, kernelGridSize, 0, device.stream()>>>(v, num_neurons, t, resulting_voltages);
-        CopyToOutput<<<kernelBlockSize, kernelGridSize, 0, device.stream()>>>(z, num_neurons, t, resulting_activities);
+        CopyToOutput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, num_neurons, t, resulting_voltages);
+        CopyToOutput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(z, num_neurons, t, resulting_activities);
     }
 }
 

@@ -1,4 +1,5 @@
 #include <unsupported/Eigen/CXX11/Tensor>
+#include "cublas_v2.h"
 
 using GPUDevice = Eigen::GpuDevice;
 
@@ -17,11 +18,11 @@ public:
                     float *resulting_voltages, float *resulting_activities);
 
 private:
-    cublasHandle_t _cublas_handle;
-    int _num_neurons;
-    int _num_input_channels;
-    int _num_timesteps;
+    cublasHandle_t cublas_handle;
+    int num_neurons;
+    int num_input_channels;
+    int num_timesteps;
 
-    float _threshold_voltage;
-    float _decay_factor;
+    float threshold_voltage;
+    float decay_factor;
 };

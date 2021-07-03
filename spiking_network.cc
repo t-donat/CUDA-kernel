@@ -1,6 +1,8 @@
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include <unsupported/Eigen/CXX11/Tensor>
+#include <stdio.h>
+#include <iostream>
 
 #include "spiking_network.h"
 
@@ -13,46 +15,53 @@ REGISTER_OP("ForwardPass")
 .Input("weights_input: float")
 .Input("weights_recurrent: float")
 .Input("time_series_data: float")
-.Input("decay_factor: float")
-.Input("threshold_voltage: float")
+.Attr("decay_factor: float")
+.Attr("threshold_voltage: float")
 .Output("resulting_voltages: float")
 .Output("resulting_activations: float");
 
 class ForwardPassOp : public OpKernel {
+private:
+    float threshold_voltage;
+    float decay_factor;
+
 public:
     explicit ForwardPassOp(OpKernelConstruction* context) : OpKernel(context) {
         cublasCreate(&cublas_handle);
+
+        // get the threshold voltage and decay factor
+        OP_REQUIRES_OK(context, context->GetAttr("threshold_voltage", &threshold_voltage));
+        OP_REQUIRES_OK(context, context->GetAttr("decay_factor", &decay_factor));
+
     }
 
     ~ForwardPassOp() override { cublasDestroy(cublas_handle); }
 
     void Compute(OpKernelContext* context) override {
+
+        std::cout << "[INFO] Allocating input memory" << std::endl;
         // allocate input tensors and get their contents
-        const Tensor& W_in = context->input(0);
-        const Tensor& W_rec = context->input(1);
-        const Tensor& time_series_data = context->input(2);
+        const Tensor& W_in_tensor = context->input(0);
+        const Tensor& W_rec_tensor = context->input(1);
+        const Tensor& time_series_tensor = context->input(2);
 
-        const Tensor& decay_factor_tensor = context->input(3);
-        const Tensor& threshold_voltage_tensor = context->input(4);
-
-        float decay_factor = decay_factor_tensor.flat<float>()(0);
-        float threshold_voltage = threshold_voltage_tensor.flat<float>()(0);
-
+        std::cout << "[INFO] Getting dimensions" << std::endl;
         // get the values for the dimensions
-        int num_neurons = static_cast<int>(W_rec.shape().dim_size(1));
-        int num_time_steps = static_cast<int>(time_series_data.shape().dim_size(0));
-        int num_input_channels = static_cast<int>(time_series_data.shape().dim_size(1));
+        int num_neurons = static_cast<int>(W_rec_tensor.shape().dim_size(1));
+        int num_time_steps = static_cast<int>(time_series_tensor.shape().dim_size(0));
+        int num_input_channels = static_cast<int>(time_series_tensor.shape().dim_size(1));
 
+        std::cout << "[INFO] Allocation output memory" << std::endl;
         // allocate output tensors
         TensorShape output_shape({num_time_steps, num_neurons});
-        Tensor* resulting_voltages = nullptr;
-        Tensor* resulting_activities = nullptr;
+        Tensor* resulting_voltages_tensor = nullptr;
+        Tensor* resulting_activities_tensor = nullptr;
 
-        OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &resulting_voltages));
-        OP_REQUIRES_OK(context, context->allocate_output(1, output_shape, &resulting_activities));
+        OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &resulting_voltages_tensor));
+        OP_REQUIRES_OK(context, context->allocate_output(1, output_shape, &resulting_activities_tensor));
 
+        std::cout << "[INFO] Allocating temporary memory" << std::endl;
         // allocate temporary/intermediate tensors
-        // TODO base_voltage_activity: allocate_persistent -> no? allocate as Const class?
         Tensor v_tensor, z_tensor, current_input_tensor, base_voltage_activity_tensor;
 
         // shape of v and z in each time step
@@ -63,29 +72,44 @@ public:
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, vector_shape, &current_input_tensor));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, output_shape, &base_voltage_activity_tensor));
 
-        // initialize v & z to zeros
-        auto v_flat = v_tensor.flat<float>();
-        auto z_flat = z_tensor.flat<float>();
-
-        for (int i = 0; i < num_neurons; i++) {
-            v_flat(i) = 0.0f;
-            z_flat(i) = 0.0f;
-        }
-
-
+        std::cout << "[INFO] Initializing functor" << std::endl;
         ForwardPass forward(cublas_handle,
                             num_neurons, num_input_channels, num_time_steps,
                             decay_factor, threshold_voltage);
 
+        // exposing the data of the tensors
+        /*
+        auto W_in = W_in_tensor.flat<float>();
+        auto W_rec = W_rec_tensor.flat<float>();
+        auto time_series = time_series_tensor.flat<float>();
+
+        auto v = v_tensor.flat<float>();
+        auto z = z_tensor.flat<float>();
+        auto current_input = current_input_tensor.flat<float>();
+
+        auto base_voltage_activity = base_voltage_activity_tensor.flat<float>();
+
+        auto resulting_voltages = resulting_activities_tensor->flat<float>();
+        auto resulting_activities = resulting_activities_tensor->flat<float>();
+        */
+        std::cout << "[INFO] Running the forward pass" << std::endl;
+        /*
         forward(context, context->eigen_gpu_device(),
-                W_in.flat<float>().data(), W_rec.flat<float>().data(),
-                v_flat.data(), z_flat.data(),
-                time_series_data.flat<float>().data(), base_voltage_activity_tensor.flat<float>().data(),
+                W_in.data(), W_rec.data(),
+                v.data(), z.data(),
+                time_series.data(), base_voltage_activity.data(),
+                current_input.data(),
+                resulting_voltages.data(), resulting_activities.data());
+        */
+        forward(context, context->eigen_gpu_device(),
+                W_in_tensor.flat<float>().data(), W_rec_tensor.flat<float>().data(),
+                v_tensor.flat<float>().data(), z_tensor.flat<float>().data(),
+                time_series_tensor.flat<float>().data(), base_voltage_activity_tensor.flat<float>().data(),
                 current_input_tensor.flat<float>().data(),
-                resulting_voltages->flat<float>().data(), resulting_activities->flat<float>().data());
+                resulting_voltages_tensor->flat<float>().data(), resulting_activities_tensor->flat<float>().data());
 
 
-
+        std::cout << "[INFO] Operation completed" << std::endl;
     }
 };
 
