@@ -1,15 +1,22 @@
 import tensorflow as tf
 import numpy as np
 
-recurrent_weights = np.random.randn(4, 4) * 0.1
+num_timesteps = 50
+num_batches = 5
+num_input_channels = 2
+num_neurons = 4
+
+recurrent_weights = np.random.randn(num_neurons, num_neurons) * 0.1
 np.fill_diagonal(recurrent_weights, 0.0)
 recurrent_weights_tensor = tf.convert_to_tensor(recurrent_weights, dtype=float)
 
-input_weights = np.random.randn(2, 4) * 0.1
+input_weights = np.random.randn(num_input_channels, num_neurons) * 0.1
 input_weights_tensor = tf.convert_to_tensor(input_weights, dtype=float)
 
-x = np.arange(20)
-time_series_data = np.array([np.sin(np.pi*x/10), np.cos(np.pi*x/20)]).T
+x = np.arange(num_timesteps) * 2 / num_timesteps
+time_series_data = np.array([np.sin(2 / 3* np.pi*x), np.cos(np.pi*x)]).T
+time_series_data = time_series_data.reshape((num_timesteps, 1, num_input_channels))
+time_series_data = np.repeat(time_series_data, num_batches, axis=1)
 time_series_data_tensor = tf.convert_to_tensor(time_series_data, dtype=float)
 
 decay_factor = 0.95
@@ -23,17 +30,26 @@ resulting_voltages, resulting_activities = spiking_module.forward_pass(input_wei
                                                                        decay_factor=decay_factor,
                                                                        threshold_voltage=threshold_voltage)
 
-print("Membrane voltages:")
-print(resulting_voltages.numpy())
+resulting_voltages_array = resulting_voltages.numpy()
+resulting_activities_array = resulting_activities.numpy()
 
-print("\n--------------------------\n")
+print("results: ")
 
-print("Neuron activities")
-print(resulting_activities.numpy())
+for batch in range(num_batches):
+    print("Membrane voltages:")
+    print(resulting_voltages_array[:, 0])
+
+    print("\n--------------------------\n")
+
+    print("Neuron activities")
+    print(resulting_activities_array[:, 0])
 
 
-print("Activated voltages")
+    print("Activated voltages")
 
-print("\n--------------------------\n")
+    print("\n--------------------------\n")
 
-print(resulting_voltages.numpy()[resulting_activities.numpy().astype(bool)])
+    print(resulting_voltages_array[:, 0][resulting_activities_array[:, 0].astype(bool)])
+
+print(f"All voltage batches close to equal: {all([np.allclose(timestep, timestep[0]) for timestep in resulting_voltages_array])}")
+print(f"All activity batches close to equal: {all([np.allclose(timestep, timestep[0]) for timestep in resulting_activities_array])}")
