@@ -47,13 +47,15 @@ public:
 
         std::cout << "[INFO] Getting dimensions" << std::endl;
         // get the values for the dimensions
+
         int num_neurons = static_cast<int>(W_rec_tensor.shape().dim_size(1));
         int num_time_steps = static_cast<int>(time_series_tensor.shape().dim_size(0));
-        int num_input_channels = static_cast<int>(time_series_tensor.shape().dim_size(1));
+        int batch_size = static_cast<int>(time_series_tensor.shape().dim_size(1));
+        int num_input_channels = static_cast<int>(time_series_tensor.shape().dim_size(2));
 
         std::cout << "[INFO] Allocation output memory" << std::endl;
         // allocate output tensors
-        TensorShape output_shape({num_time_steps, num_neurons});
+        TensorShape output_shape({num_time_steps, batch_size, num_neurons});
         Tensor* resulting_voltages_tensor = nullptr;
         Tensor* resulting_activities_tensor = nullptr;
 
@@ -65,7 +67,7 @@ public:
         Tensor v_tensor, z_tensor, current_input_tensor, base_voltage_activity_tensor;
 
         // shape of v and z in each time step
-        TensorShape vector_shape({num_neurons, 1});
+        TensorShape vector_shape({batch_size, num_neurons});
 
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, vector_shape, &v_tensor));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, vector_shape, &z_tensor));
@@ -73,7 +75,16 @@ public:
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, output_shape, &base_voltage_activity_tensor));
 
         std::cout << "[INFO] Initializing functor" << std::endl;
+
+        std::cout << "batch_size: " << batch_size << std::endl;
+        std::cout << "num_neurons: " << num_neurons << std::endl;
+        std::cout << "num_input_channels: " << num_input_channels << std::endl;
+        std::cout << "num_time_steps: " << num_time_steps << std::endl;
+
+        std::cout << "decay_factor: " << decay_factor << std::endl;
+        std::cout << "threshold_voltage: " << threshold_voltage << std::endl;
         ForwardPass forward(cublas_handle,
+                            batch_size,
                             num_neurons, num_input_channels, num_time_steps,
                             decay_factor, threshold_voltage);
 

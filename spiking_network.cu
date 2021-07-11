@@ -63,10 +63,10 @@ __global__ void FloatMatMulKernel(const int N, const int K, const int M, const f
 
 }
 
-__global__ void NeuronActivationUpdateRule(const float* v_membrane, const int N, float v_th, float* z) {
-    int tID = threadIdx.x + blockDim.x * blockIdx.x;
+__global__ void NeuronActivationUpdateRule(const float* v_membrane, float* z, float v_th) {
+    int tID = blockDim.y * threadIdx.x + threadIdx.y;
 
-    if (tID < N) {
+    if (tID < blockDim.x * blockDim.y ) {
         if (v_membrane[tID] < v_th) {
             z[tID] = 0.0f;
         }
@@ -77,33 +77,32 @@ __global__ void NeuronActivationUpdateRule(const float* v_membrane, const int N,
 }
 
 
-__global__ void MembraneVoltageUpdateRule(float* v, const float* z, const float* input, const int N, const float v_th) {
-    int tID = threadIdx.x + blockDim.x * blockIdx.x;
+__global__ void MembraneVoltageUpdateRule(float* v, const float* z, const float* input, const float v_th) {
+    int tID = blockDim.y * threadIdx.x + threadIdx.y;
 
-    if (tID < N) {
+    if (tID < blockDim.x * blockDim.y) {
         v[tID] += input[tID] - v_th * z[tID];
     }
 }
 
-__global__ void CopyToInput(const float* base_voltage_activity, const int N, const int timestep, float* out) {
-    int tID = threadIdx.x + blockDim.x * blockIdx.x;
+__global__ void CopyFromInput(const float* base_voltage_activity, const int timestep, float* out) {
+   int tID = blockDim.y * threadIdx.x + threadIdx.y;
 
-    if (tID < N) {
-        out[tID] = base_voltage_activity[N * timestep + tID];
+    if (tID < blockDim.x * blockDim.y ) {
+        out[tID] = base_voltage_activity[blockDim.x * blockDim.y * timestep + tID];
     }
 }
 
-__global__ void CopyToOutput(const float* in, const int N, const int timestep, float *result_array) {
-    int tID = threadIdx.x + blockDim.x * blockIdx.x;
+__global__ void CopyToOutput(const float* in, const int timestep, float *result_array) {
+    int tID = blockDim.y * threadIdx.x + threadIdx.y;
 
-    if (tID < N) {
-        result_array[N * timestep + tID] = in[tID];
-        //printf("%d, %d, %f\t", N * timestep + tID, tID,  result_array[N * timestep + tID]);
+    if (tID < blockDim.x * blockDim.y ) {
+        result_array[blockDim.x * blockDim.y * timestep + tID] = in[tID];
     }
 }
 
 __global__ void SetToValue(float *in, const float value) {
-    int tID = blockDim.x * threadIdx.y + threadIdx.x;
+    int tID = blockDim.y * threadIdx.x + threadIdx.y;
 
     if (tID < blockDim.x * blockDim.y) {
         in[tID] = value;
@@ -111,12 +110,14 @@ __global__ void SetToValue(float *in, const float value) {
 }
 
 ForwardPass::ForwardPass(cublasHandle_t cublas_handle,
+                         int batch_size,
                          int num_neurons,
                          int num_input_channels,
                          int num_timesteps,
                          float decay_factor,
                          float threshold_voltage) :
                             cublas_handle(cublas_handle),
+                            batch_size(batch_size),
                             num_neurons(num_neurons),
                             num_input_channels(num_input_channels),
                             num_timesteps(num_timesteps),
@@ -133,7 +134,7 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     static float beta = 0.0f;
     //static cudaError_t exit_status;
 
-    dim3 kernelBlockSize(num_neurons, 1, 1);
+    dim3 kernelBlockSize(batch_size, num_neurons, 1);
     dim3 kernelGridSize(1, 1, 1);
 
     // set values of v and z to guarentee that they are initialized to 0
@@ -143,35 +144,35 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     cublasSetStream(cublas_handle, device.stream());
 
     // initial large GEMM of input time series data with input weights
-    cublasSgemm_v2(cublas_handle,
-                   CUBLAS_OP_N, CUBLAS_OP_N,
-                   num_neurons, num_timesteps, num_input_channels,
-                   &alpha,
-                   W_in, num_neurons,
-                   timeseries_data, num_input_channels,
-                   &beta,
-                   base_activity, num_neurons);
-
+    cublasSgemmStridedBatched(cublas_handle,
+                              CUBLAS_OP_N, CUBLAS_OP_N,
+                              num_neurons, batch_size, num_input_channels,
+                              &alpha,
+                              W_in, num_neurons, 0,
+                              timeseries_data, num_input_channels, batch_size * num_input_channels,
+                              &beta,
+                              base_activity, num_neurons, batch_size * num_neurons,
+                              num_timesteps);
 
 
     // iterate though the time series
     for (int t = 0; t < num_timesteps; t++) {
-        CopyToInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(base_activity, num_neurons, t, current_input);
+        CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(base_activity, t, current_input);
 
-        cublasSgemv_v2(cublas_handle,
-                       CUBLAS_OP_T,
-                       num_neurons, num_neurons,
+        cublasSgemm_v2(cublas_handle,
+                       CUBLAS_OP_N, CUBLAS_OP_N,
+                       num_neurons, batch_size, num_neurons,
                        &alpha,
                        W_rec, num_neurons,
-                       z, 1,
+                       z, num_neurons,
                        &decay_factor,
-                       v, 1);
+                       v, num_neurons);
 
-        MembraneVoltageUpdateRule<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, z, current_input, num_neurons, threshold_voltage);
-        NeuronActivationUpdateRule<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, num_neurons, threshold_voltage, z);
+        MembraneVoltageUpdateRule<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, z, current_input, threshold_voltage);
+        NeuronActivationUpdateRule<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, z, threshold_voltage);
 
-        CopyToOutput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, num_neurons, t, resulting_voltages);
-        CopyToOutput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(z, num_neurons, t, resulting_activities);
+        CopyToOutput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(v, t, resulting_voltages);
+        CopyToOutput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(z, t, resulting_activities);
     }
 }
 

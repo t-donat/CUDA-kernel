@@ -6,6 +6,7 @@ using GPUDevice = Eigen::GpuDevice;
 struct ForwardPass {
 public:
     ForwardPass(cublasHandle_t cublas_handle,
+                int batch_size,
                 int num_neurons,
                 int num_input_channels,
                 int num_timesteps,
@@ -19,6 +20,7 @@ public:
 
 private:
     cublasHandle_t cublas_handle;
+    int batch_size;
     int num_neurons;
     int num_input_channels;
     int num_timesteps;
