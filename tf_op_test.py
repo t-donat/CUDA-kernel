@@ -111,7 +111,6 @@ else:
     if not voltages_ok:
 
         print("\nMembrane voltage discrepancies (larger than 10⁻⁸):\n")
-
         differences = expected_voltages - resulting_voltages_array[:, 0].reshape(num_timesteps, 1, num_neurons)
         different_spots = np.invert(np.isclose(expected_voltages, resulting_voltages_array[:, 0].reshape(num_timesteps,
                                                                                                          1,
@@ -120,15 +119,17 @@ else:
         # to avoid repeating the same difference that is shared across the batches
         duplicates_removed = discrepancy_values[::num_batches]
 
-        orders_of_magnitude = np.floor(np.log10(np.abs(discrepancy_values))).astype(int)
+        orders_of_magnitude = np.floor(np.log10(np.abs(duplicates_removed))).astype(int)
         unique_orders_of_magnitude, magnitude_counts = np.unique(orders_of_magnitude, return_counts=True)
 
-        num_discrepancies = len(discrepancy_values)
+        num_discrepancies = len(duplicates_removed)
+        num_values_per_batch = different_spots[:, 0].size
 
         print('Order of Magnitude \tNumber of samples \tPercentage of discrepancies')
-
         for current_magnitude, current_counts in zip(unique_orders_of_magnitude, magnitude_counts):
             print(f"{current_magnitude} \t\t\t{current_counts} \t\t\t{round(current_counts/num_discrepancies * 100, 2)}%")
+
+        print(f"\nTotal number of discrepancies: {num_discrepancies} ({round(num_discrepancies/num_values_per_batch * 100, 2)}% of all values)", )
 
         #while True:
         #    user_input = input('Should all voltage discrepancies be printed? (y/N): ')
