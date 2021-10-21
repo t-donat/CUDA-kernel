@@ -12,10 +12,10 @@ def spike_gradient(membrane_voltages, threshold_voltage):
     return dampening_factor * np.maximum(1 - np.abs(membrane_voltages - threshold_voltage) / v_th, 0.0)
 
 
-num_timesteps = 1000
-num_batches = 128
+num_timesteps = 100
+num_batches = 4
 num_input_channels = 2
-num_neurons = 128
+num_neurons = 16
 
 recurrent_weights = np.random.randn(num_neurons, num_neurons) * 0.1
 np.fill_diagonal(recurrent_weights, 0.0)
