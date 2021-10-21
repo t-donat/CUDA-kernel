@@ -166,7 +166,7 @@ print(f"Runtime native Python: {python_duration}")
 if True:
     # write data to output files
     hyperparameters = np.array((num_timesteps, num_batches, num_input_channels, num_neurons, decay_factor, threshold_voltage))
-    
+
     with open("hyperparameters.p", "wb") as pickle_file:
         pickle.dump(hyperparameters, pickle_file)
 
@@ -182,8 +182,10 @@ if True:
     with open("resulting_voltages.p", "wb") as pickle_file:
         pickle.dump(resulting_voltages_array, pickle_file)
 
-    with open("resulting_activities.p", "wb") as pickle_file:
-        pickle.dump(resulting_voltages_array, pickle_file)
+    with open("resulting_activations.p", "wb") as pickle_file:
+        pickle.dump(resulting_activities_array, pickle_file)
+
+    print("\nSuccessfully saved to pickle files!")
 
 exit(0)
 # -------------------------------------------------------------------
