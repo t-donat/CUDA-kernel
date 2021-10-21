@@ -2,6 +2,14 @@ import tensorflow as tf
 import numpy as np
 
 import time
+import pickle
+
+
+def spike_gradient(membrane_voltages, threshold_voltage):
+    dampening_factor = 0.3
+
+    return dampening_factor * np.maximum(1 - np.abs(membrane_voltages - threshold_voltage) / v_th, 0.0)
+
 
 num_timesteps = 1000
 num_batches = 128
@@ -154,3 +162,71 @@ else:
 
 print(f"\nRuntime CUDA OP: {op_duration}")
 print(f"Runtime native Python: {python_duration}")
+
+if True:
+    # write data to output files
+    hyperparameters = np.array((num_timesteps, num_batches, num_input_channels, num_neurons, decay_factor, threshold_voltage))
+    
+    with open("hyperparameters.p", "wb") as pickle_file:
+        pickle.dump(hyperparameters, pickle_file)
+
+    with open("input_weights.p", "wb") as pickle_file:
+        pickle.dump(input_weights, pickle_file)
+
+    with open("recurrent_weights.p", "wb") as pickle_file:
+        pickle.dump(recurrent_weights, pickle_file)
+
+    with open("time_series_data.p", "wb") as pickle_file:
+        pickle.dump(time_series_data_batch, pickle_file)
+
+    with open("resulting_voltages.p", "wb") as pickle_file:
+        pickle.dump(resulting_voltages_array, pickle_file)
+
+    with open("resulting_activities.p", "wb") as pickle_file:
+        pickle.dump(resulting_voltages_array, pickle_file)
+
+exit(0)
+# -------------------------------------------------------------------
+# BACKWARD PASS
+# -------------------------------------------------------------------
+dE_dv_partial = - 2 * (expected_output.flatten() - predicted_output.flatten()).reshape(-1, 1)
+
+# dE_dv_total = np.zeros((num_timesteps, num_batches, num_neurons))
+previous_dE_dv = np.zeros((num_batches, num_neurons))
+
+dE_dW_in = np.zeros_like(W_in)
+dE_dW_rec = np.zeros_like(W_rec)
+
+for time_step in reversed(range(num_timesteps)):
+    current_membrane_voltages = resulting_voltages_array[time_step]
+    psi = spike_gradient(current_membrane_voltages, threshold_voltage)
+
+    dvk_dvj = np.diag(decay_factor - v_th * psi.flatten()) + W_rec * psi.T
+
+    current_dE_dv = dE_dv_partial[time_step] * np.ones((num_batches, num_neurons)) + np.sum(dvk_dvj * previous_dE_dv, axis=0)
+
+    # implicit summation over batches due to the outer product
+    dE_dW_in_component = np.dot(input_data[time_step].T, current_dE_dv)
+    dE_dW_rec_component = np.dot(spike_activity[time_step].T, current_dE_dv)
+
+    assert dE_dW_in_component.shape == W_in.shape
+    assert dE_dW_rec_component.shape == W_rec.shape
+
+    dE_dW_in += dE_dW_in_component
+    dE_dW_rec += dE_dW_rec_component
+
+    previous_dE_dv = current_dE_dv
+
+print("Input weights:")
+print(f"Shape: {dE_dW_in.shape}")
+print("Result:")
+print(dE_dW_in)
+print("")
+
+print("Recurrent weights:")
+print(f"Shape: {dE_dW_rec.shape}")
+print("Result:")
+print(dE_dW_rec)
+
+
+
