@@ -3,6 +3,7 @@ import numpy as np
 
 import time
 import pickle
+import os
 
 
 def spike_gradient(membrane_voltages, threshold_voltage):
@@ -165,24 +166,27 @@ print(f"Runtime native Python: {python_duration}")
 
 if True:
     # write data to output files
+    save_directory = "./data/pickled_data"
+    os.makedirs(save_directory, exist_ok=True)
+
     hyperparameters = np.array((num_timesteps, num_batches, num_input_channels, num_neurons, decay_factor, threshold_voltage))
 
-    with open("hyperparameters.p", "wb") as pickle_file:
+    with open(os.path.join(save_directory, "hyperparameters.p"), "wb") as pickle_file:
         pickle.dump(hyperparameters, pickle_file)
 
-    with open("input_weights.p", "wb") as pickle_file:
+    with open(os.path.join(save_directory, "input_weights.p"), "wb") as pickle_file:
         pickle.dump(input_weights, pickle_file)
 
-    with open("recurrent_weights.p", "wb") as pickle_file:
+    with open(os.path.join(save_directory, "recurrent_weights.p"), "wb") as pickle_file:
         pickle.dump(recurrent_weights, pickle_file)
 
-    with open("time_series_data.p", "wb") as pickle_file:
+    with open(os.path.join(save_directory, "time_series_data.p"), "wb") as pickle_file:
         pickle.dump(time_series_data_batch, pickle_file)
 
-    with open("resulting_voltages.p", "wb") as pickle_file:
+    with open(os.path.join(save_directory, "resulting_voltages.p"), "wb") as pickle_file:
         pickle.dump(resulting_voltages_array, pickle_file)
 
-    with open("resulting_activations.p", "wb") as pickle_file:
+    with open(os.path.join(save_directory, "resulting_activations.p"), "wb") as pickle_file:
         pickle.dump(resulting_activities_array, pickle_file)
 
     print("\nSuccessfully saved to pickle files!")
