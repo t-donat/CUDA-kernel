@@ -398,6 +398,8 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
         CopyToOutput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(total_dE_dv,
                                                                               current_total_dE_dv, t,
                                                                               num_batches, num_neurons);
+
+        //previous_total_dE_dv = curent_total_dE_dv;
     }
 
     // dot product of x(t) total_dE_dv(t) for each time step
