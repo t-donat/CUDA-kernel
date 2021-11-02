@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 import pickle
 import os
 
@@ -197,6 +198,9 @@ def verify_forward_pass(expected_voltages, expected_activations, calculated_volt
 
 def print_voltage_discrepancies(expected_voltages, calculated_voltages):
     print("\nMembrane voltage discrepancies (larger than 10⁻⁸):\n")
+
+    num_time_steps, num_batches, num_neurons = expected_voltages.shape
+
     differences = expected_voltages - calculated_voltages[:, 0].reshape(num_time_steps, 1, num_neurons)
     different_spots = np.invert(np.isclose(expected_voltages, calculated_voltages[:, 0].reshape(num_time_steps,
                                                                                                 1,
