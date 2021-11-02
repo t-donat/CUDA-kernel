@@ -143,7 +143,7 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
                          recurrent_weights,
                          threshold_voltage, decay_factor):
 
-    num_time_Steps, num_batches, num_input_channels = time_series_data.shape
+    num_time_steps, num_batches, num_input_channels = time_series_data.shape
     *_, num_neurons = resulting_voltages.shape
 
     previous_total_dE_dv = np.zeros((num_batches, num_neurons))

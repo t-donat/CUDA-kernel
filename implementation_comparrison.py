@@ -152,17 +152,17 @@ dE_dy = -2 * (expected_output - network_output)
 partial_dy_dv = output_weights
 partial_dE_dv = np.dot(dE_dy, partial_dy_dv)
 
-expected_dE_dW_in, expected_dE_dW_rec = backward_pass(time_series_data, resulting_voltages, resulting_activations,
-                                                      partial_dE_dv, recurrent_weights,
-                                                      threshold_voltage, decay_factor)
+expected_dE_dW_in, expected_dE_dW_rec = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
+                                                             partial_dE_dv, recurrent_weights,
+                                                             threshold_voltage, decay_factor)
 
 print("Input weights:")
-print(f"Shape: {dE_dW_in.shape}")
+print(f"Shape: {expected_dE_dW_in.shape}")
 print("Result:")
-print(dE_dW_in)
+print(expected_dE_dW_in)
 print("")
 
 print("Recurrent weights:")
-print(f"Shape: {dE_dW_rec.shape}")
+print(f"Shape: {expected_dE_dW_rec.shape}")
 print("Result:")
-print(dE_dW_rec)
+print(expected_dE_dW_rec)
