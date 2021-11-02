@@ -81,7 +81,7 @@ validation_results = verify_forward_pass(expected_voltages,
                                          resulting_voltages,
                                          resulting_activations)
 
-cuda_voltages_ok, cuda_activities_ok, python_voltages_ok, python_activations_ok, voltages_match, activations_match = validation_results
+cuda_voltages_ok, cuda_activations_ok, python_voltages_ok, python_activations_ok, voltages_match, activations_match = validation_results
 
 
 print("Forward Pass Results: ")
@@ -93,25 +93,25 @@ if cuda_voltages_ok:
 
     print("\n--------------------------\n")
 
-    print("Neuron activities")
-    print(resulting_activities[:, 0])
+    print("Neuron activations")
+    print(resulting_activations[:, 0])
 
     print("Activated voltages")
 
     print("\n--------------------------\n")
 
-    print(resulting_voltages[:, 0][resulting_activities[:, 0].astype(bool)])
+    print(resulting_voltages[:, 0][resulting_activations[:, 0].astype(bool)])
 
 else:
     print('Voltages do not match within batches for each neuron')
 
 print("\nCUDA Implementation:")
-print(f"Are all voltage batches close to equal? {cuda_voltages_ok}")
-print(f"Are all activity batches close to equal? {cuda_activities_ok}")
+print(f"Are all voltages close to equal between batches? {cuda_voltages_ok}")
+print(f"Are all activations close to equal between batches? {cuda_activations_ok}")
 
 print("\nPython Implementation")
-print(f"Are all voltage batches close to equal? {python_voltages_ok}")
-print(f"Are all activity batches close to equal? {python_activations_ok}")
+print(f"Are all voltages close to equal between batches? {python_voltages_ok}")
+print(f"Are all activations close to equal between batches? {python_activations_ok}")
 
 print("\n Comparing implementations:")
 print(f"Do the membrane voltages match? {voltages_match}")
