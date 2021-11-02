@@ -138,37 +138,21 @@ if save_data:
                          time_series_data,
                          resulting_voltages, resulting_activations)
 
-exit(0)
+
 # -------------------------------------------------------------------
 # BACKWARD PASS
 # -------------------------------------------------------------------
-dE_dv_partial = - 2 * (expected_output.flatten() - predicted_output.flatten()).reshape(-1, 1)
+expected_output = (time_series_data[:, :, 0] + time_series_data[:, :, 1]).reshape(num_time_steps,
+                                                                                  num_batches,
+                                                                                  num_output_channels)
 
-# dE_dv_total = np.zeros((num_timesteps, num_batches, num_neurons))
-previous_dE_dv = np.zeros((num_batches, num_neurons))
+dE_dy = -2 * (expected_output - resulting_voltages)
+partial_dy_dv = output_weights
+partial_dE_dv = np.dot(dE_dy, partial_dy_dv)
 
-dE_dW_in = np.zeros_like(W_in)
-dE_dW_rec = np.zeros_like(W_rec)
-
-for time_step in reversed(range(num_timesteps)):
-    current_membrane_voltages = resulting_voltages_array[time_step]
-    psi = spike_gradient(current_membrane_voltages, threshold_voltage)
-
-    dvk_dvj = np.diag(decay_factor - v_th * psi.flatten()) + W_rec * psi.T
-
-    current_dE_dv = dE_dv_partial[time_step] * np.ones((num_batches, num_neurons)) + np.sum(dvk_dvj * previous_dE_dv, axis=0)
-
-    # implicit summation over batches due to the outer product
-    dE_dW_in_component = np.dot(input_data[time_step].T, current_dE_dv)
-    dE_dW_rec_component = np.dot(spike_activity[time_step].T, current_dE_dv)
-
-    assert dE_dW_in_component.shape == W_in.shape
-    assert dE_dW_rec_component.shape == W_rec.shape
-
-    dE_dW_in += dE_dW_in_component
-    dE_dW_rec += dE_dW_rec_component
-
-    previous_dE_dv = current_dE_dv
+expected_dE_dW_in, expected_dE_dW_rec = backward_pass(time_series_data, resulting_voltages, resulting_activations,
+                                                      partial_dE_dv, recurrent_weights,
+                                                      threshold_voltage, decay_factor)
 
 print("Input weights:")
 print(f"Shape: {dE_dW_in.shape}")
@@ -180,6 +164,3 @@ print("Recurrent weights:")
 print(f"Shape: {dE_dW_rec.shape}")
 print("Result:")
 print(dE_dW_rec)
-
-
-
