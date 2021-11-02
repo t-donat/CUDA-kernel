@@ -146,7 +146,9 @@ expected_output = (time_series_data[:, :, 0] + time_series_data[:, :, 1]).reshap
                                                                                   num_batches,
                                                                                   num_output_channels)
 
-dE_dy = -2 * (expected_output - resulting_voltages)
+network_output = np.dot(resulting_voltages, output_weights.T)
+
+dE_dy = -2 * (expected_output - network_output)
 partial_dy_dv = output_weights
 partial_dE_dv = np.dot(dE_dy, partial_dy_dv)
 
