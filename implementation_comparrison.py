@@ -10,6 +10,13 @@ from snn_utils import python_forward_pass, MSE, python_backward_pass
 from snn_utils import verify_forward_pass, print_voltage_discrepancies, save_to_pickle_files
 
 # -------------------------------------------------------------------
+# CONFIG
+# -------------------------------------------------------------------
+
+verbose = False
+save_data = True
+
+# -------------------------------------------------------------------
 # HYPERPARAMETERS
 # -------------------------------------------------------------------
 
@@ -23,6 +30,7 @@ num_output_channels = 1
 
 decay_factor = 0.95
 threshold_voltage = 0.5
+gradient_scaling_factor = 0.3
 
 # -------------------------------------------------------------------
 # SETUP
@@ -76,54 +84,53 @@ python_duration = time.time() - start
 # VALIDATING THE RESULTS
 # -------------------------------------------------------------------
 
-validation_results = verify_forward_pass(expected_voltages,
-                                         expected_activations,
-                                         resulting_voltages,
-                                         resulting_activations)
+(cuda_voltages_ok, cuda_activations_ok,
+ python_voltages_ok, python_activations_ok,
+ voltages_match, activations_match) = verify_forward_pass(expected_voltages,
+                                                          expected_activations,
+                                                          resulting_voltages,
+                                                          resulting_activations)
 
-cuda_voltages_ok, cuda_activations_ok, python_voltages_ok, python_activations_ok, voltages_match, activations_match = validation_results
+if verbose:
+    print("Forward Pass Results: ")
 
+    if cuda_voltages_ok:
 
-print("Forward Pass Results: ")
+        print("Membrane voltages:")
+        print(resulting_voltages[:, 0])
 
-if cuda_voltages_ok:
+        print("\n--------------------------\n")
 
-    print("Membrane voltages:")
-    print(resulting_voltages[:, 0])
+        print("Neuron activations")
+        print(resulting_activations[:, 0])
 
-    print("\n--------------------------\n")
+        print("Activated voltages")
 
-    print("Neuron activations")
-    print(resulting_activations[:, 0])
+        print("\n--------------------------\n")
 
-    print("Activated voltages")
+        print(resulting_voltages[:, 0][resulting_activations[:, 0].astype(bool)])
 
-    print("\n--------------------------\n")
+    else:
+        print('Voltages do not match within batches for each neuron')
 
-    print(resulting_voltages[:, 0][resulting_activations[:, 0].astype(bool)])
+    print("\nCUDA Implementation:")
+    print(f"Are all voltages close to equal between batches? {cuda_voltages_ok}")
+    print(f"Are all activations close to equal between batches? {cuda_activations_ok}")
 
-else:
-    print('Voltages do not match within batches for each neuron')
+    print("\nPython Implementation")
+    print(f"Are all voltages close to equal between batches? {python_voltages_ok}")
+    print(f"Are all activations close to equal between batches? {python_activations_ok}")
 
-print("\nCUDA Implementation:")
-print(f"Are all voltages close to equal between batches? {cuda_voltages_ok}")
-print(f"Are all activations close to equal between batches? {cuda_activations_ok}")
+    print("\n Comparing implementations:")
+    print(f"Do the membrane voltages match? {voltages_match}")
+    print(f"Do the neuron activations match between Python and CUDA? {activations_match}")
 
-print("\nPython Implementation")
-print(f"Are all voltages close to equal between batches? {python_voltages_ok}")
-print(f"Are all activations close to equal between batches? {python_activations_ok}")
+    if not voltages_match:
+        print_voltage_discrepancies(expected_voltages, resulting_voltages)
 
-print("\n Comparing implementations:")
-print(f"Do the membrane voltages match? {voltages_match}")
-print(f"Do the neuron activations match between Python and CUDA? {activations_match}")
+    print(f"\nRuntime CUDA OP: {op_duration}")
+    print(f"Runtime native Python: {python_duration}")
 
-if not voltages_match:
-    print_voltage_discrepancies(expected_voltages, resulting_voltages)
-
-print(f"\nRuntime CUDA OP: {op_duration}")
-print(f"Runtime native Python: {python_duration}")
-
-save_data = True
 if save_data:
     hyperparameters = np.array((num_time_steps,
                                 num_batches,
@@ -151,18 +158,40 @@ network_output = np.dot(resulting_voltages, output_weights.T)
 dE_dy = -2 * (expected_output - network_output)
 partial_dy_dv = output_weights
 partial_dE_dv = np.dot(dE_dy, partial_dy_dv)
+partial_dE_dv_tensor = tf.convert_to_tensor(partial_dE_dv, dtype=float)
 
 expected_dE_dW_in, expected_dE_dW_rec = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
                                                              partial_dE_dv, recurrent_weights,
                                                              threshold_voltage, decay_factor)
 
+print("\nPython:")
 print("Input weights:")
 print(f"Shape: {expected_dE_dW_in.shape}")
 print("Result:")
-print(expected_dE_dW_in)
-print("")
+print(expected_dE_dW_in, "\n")
 
 print("Recurrent weights:")
 print(f"Shape: {expected_dE_dW_rec.shape}")
 print("Result:")
-print(expected_dE_dW_rec)
+print(expected_dE_dW_rec, "\n")
+
+resulting_dE_dW_in, resulting_dE_dW_rec = spiking_module.backward_pass(partial_dE_dv_tensor,
+                                                                       recurrent_weights_tensor,
+                                                                       time_series_data_tensor,
+                                                                       resulting_voltages_tensor,
+                                                                       resulting_activations_tensor,
+                                                                       decay_factor=decay_factor,
+                                                                       threshold_voltage=threshold_voltage,
+                                                                       gradient_scaling_factor=gradient_scaling_factor)
+
+
+print("\nCUDA:")
+print("Input weights:")
+print(f"Shape: {resulting_dE_dW_in.shape}")
+print("Result:")
+print(resulting_dE_dW_in, "\n")
+
+print("Recurrent weights:")
+print(f"Shape: {resulting_dE_dW_rec.shape}")
+print("Result:")
+print(resulting_dE_dW_rec, "\n")
