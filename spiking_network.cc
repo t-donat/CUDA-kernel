@@ -51,13 +51,13 @@ public:
 
     void Compute(OpKernelContext* context) override {
 
-        std::cout << "[INFO] Allocating input memory" << std::endl;
+        // std::cout << "[INFO] Allocating input memory" << std::endl;
         // allocate input tensors and get their contents
         const Tensor& W_in_tensor = context->input(0); // (num_neurons x num_input_channels)
         const Tensor& W_rec_tensor = context->input(1); // (num_neurons x num_neurons)
         const Tensor& time_series_tensor = context->input(2); // (num_time_steps x num_batches x num_input_channels)
 
-        std::cout << "[INFO] Getting dimensions" << std::endl;
+        // std::cout << "[INFO] Getting dimensions" << std::endl;
         // get the values for the dimensions
 
         int num_neurons = static_cast<int>(W_rec_tensor.shape().dim_size(0));
@@ -65,7 +65,7 @@ public:
         int num_batches = static_cast<int>(time_series_tensor.shape().dim_size(1));
         int num_input_channels = static_cast<int>(time_series_tensor.shape().dim_size(2));
 
-        std::cout << "[INFO] Allocation output memory" << std::endl;
+        //std::cout << "[INFO] Allocation output memory" << std::endl;
         // allocate output tensors
         TensorShape output_shape({num_time_steps, num_batches, num_neurons});
         Tensor* resulting_voltages_tensor = nullptr;
@@ -74,7 +74,7 @@ public:
         OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &resulting_voltages_tensor));
         OP_REQUIRES_OK(context, context->allocate_output(1, output_shape, &resulting_activities_tensor));
 
-        std::cout << "[INFO] Allocating temporary memory" << std::endl;
+        // std::cout << "[INFO] Allocating temporary memory" << std::endl;
         // allocate temporary/intermediate tensors
         Tensor v_tensor, z_tensor, current_base_activity, base_voltage_activity_tensor;
 
@@ -86,6 +86,7 @@ public:
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, vector_shape, &current_base_activity));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, output_shape, &base_voltage_activity_tensor));
 
+        /*
         std::cout << "[INFO] Initializing functor" << std::endl;
 
         std::cout << "num_batches: " << num_batches << std::endl;
@@ -95,12 +96,15 @@ public:
 
         std::cout << "decay_factor: " << decay_factor << std::endl;
         std::cout << "threshold_voltage: " << threshold_voltage << std::endl;
+
+        */
+
         ForwardPass forward(cublas_handle,
                             num_batches,
                             num_neurons, num_input_channels, num_time_steps,
                             decay_factor, threshold_voltage);
 
-        std::cout << "[INFO] Running the forward pass" << std::endl;
+        // std::cout << "[INFO] Running the forward pass" << std::endl;
 
         forward(context, context->eigen_gpu_device(),
                 W_in_tensor.flat<float>().data(), W_rec_tensor.flat<float>().data(),
@@ -109,7 +113,7 @@ public:
                 v_tensor.flat<float>().data(), z_tensor.flat<float>().data(), current_base_activity.flat<float>().data(),
                 resulting_voltages_tensor->flat<float>().data(), resulting_activities_tensor->flat<float>().data());
 
-        std::cout << "[INFO] Forward pass completed" << std::endl;
+        //std::cout << "[INFO] Forward pass completed" << std::endl;
     }
 };
 
@@ -138,17 +142,17 @@ public:
         // allocate input tensors and get their contents
         const Tensor& partial_dE_dv_tensor = context->input(0); // (num_time_steps x num_batches x num_neurons)
         const Tensor& W_rec = context->input(1); // (num_neurons x num_neurons)
-        const Tensor& time_series_tensor = context->input(2); // (num_time_steps x num_batches x num_input_channels)
-        const Tensor& resulting_voltages_tensor = context->input(3); // (num_time_steps x num_batches x num_input_channels)
-        const Tensor& resulting_activations_tensor = context->input(4); // (num_time_steps x num_batches x num_input_channels)
+        const Tensor& time_series_data = context->input(2); // (num_time_steps x num_batches x num_input_channels)
+        const Tensor& resulting_voltages= context->input(3); // (num_time_steps x num_batches x num_input_channels)
+        const Tensor& resulting_activations = context->input(4); // (num_time_steps x num_batches x num_input_channels)
 
         std::cout << "[INFO] Getting dimensions" << std::endl;
         // get the values for the dimensions
 
         int num_neurons = static_cast<int>(W_rec.shape().dim_size(0));
-        int num_time_steps = static_cast<int>(time_series_tensor.shape().dim_size(0));
-        int num_batches = static_cast<int>(time_series_tensor.shape().dim_size(1));
-        int num_input_channels = static_cast<int>(time_series_tensor.shape().dim_size(2));
+        int num_time_steps = static_cast<int>(time_series_data.shape().dim_size(0));
+        int num_batches = static_cast<int>(time_series_data.shape().dim_size(1));
+        int num_input_channels = static_cast<int>(time_series_data.shape().dim_size(2));
 
         std::cout << "[INFO] Allocation output memory" << std::endl;
         // allocate output tensors
@@ -164,39 +168,33 @@ public:
         std::cout << "[INFO] Allocating temporary memory" << std::endl;
 
         // allocate temporary/intermediate tensors
-        Tensor current_input_data, current_membrane_voltages, current_neuron_activations,
-            current_partial_dE_dv, previous_total_dE_dv, current_total_dE_dv,
-            total_dE_dv,
-            dE_dW_in_components, dE_dW_rec_components;
+        Tensor current_input_data, current_membrane_voltages, current_neuron_activations;
+        Tensor current_spike_gradient, current_dv_k_dv_j, current_sum_over_k;
+        Tensor current_partial_dE_dv, previous_total_dE_dv, current_total_dE_dv;
+        Tensor dE_dW_in_components, dE_dW_rec_components;
+
+        Tensor input_nan, recurrent_nan;
 
         // the default shape of most matrices in each time step
         TensorShape default_shape({num_batches, num_neurons});
 
-        OP_REQUIRES_OK(context,
-                       context->allocate_temp(DT_FLOAT,
-                                              TensorShape({num_batches, num_input_channels}),
-                                              &current_input_data));
-
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({num_batches, num_input_channels}), &current_input_data));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_membrane_voltages));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_neuron_activations));
+
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_spike_gradient));
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({num_batches, num_neurons, num_neurons}), &current_dv_k_dv_j));
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_sum_over_k));
+
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_partial_dE_dv));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &previous_total_dE_dv));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_total_dE_dv));
 
-        OP_REQUIRES_OK(context,
-                       context->allocate_temp(DT_FLOAT,
-                                              TensorShape({num_time_steps, num_batches, num_neurons}),
-                                              &total_dE_dv));
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({num_neurons, num_input_channels}), &dE_dW_in_components));
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({num_neurons, num_neurons}), &dE_dW_rec_components));
 
-        OP_REQUIRES_OK(context,
-                       context->allocate_temp(DT_FLOAT,
-                                              TensorShape({num_time_steps, num_neurons, num_input_channels}),
-                                              &dE_dW_in_components));
-
-        OP_REQUIRES_OK(context,
-                       context->allocate_temp(DT_FLOAT,
-                                              TensorShape({num_time_steps, num_neurons, num_neurons}),
-                                              &dE_dW_rec_components));
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_BOOL, TensorShape({1}), &input_nan));
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_BOOL, TensorShape({1}), &recurrent_nan));
 
         std::cout << "[INFO] Initializing functor" << std::endl;
 
@@ -214,17 +212,18 @@ public:
                             num_neurons, num_input_channels, num_time_steps,
                             decay_factor, threshold_voltage, gradient_scaling_factor);
 
-        std::cout << "[INFO] Running the forward pass" << std::endl;
+        std::cout << "[INFO] Running the backward pass" << std::endl;
 
         backward(context, context->eigen_gpu_device(),
                  dE_dW_in->flat<float>().data(), dE_dW_rec->flat<float>().data(),
                  current_input_data.flat<float>().data(), current_membrane_voltages.flat<float>().data(), current_neuron_activations.flat<float>().data(),
+                 current_spike_gradient.flat<float>().data(), current_dv_k_dv_j.flat<float>().data(), current_sum_over_k.flat<float>().data(),
                  current_partial_dE_dv.flat<float>().data(), previous_total_dE_dv.flat<float>().data(), current_total_dE_dv.flat<float>().data(),
-                 total_dE_dv.flat<float>().data(),
                  dE_dW_in_components.flat<float>().data(), dE_dW_rec_components.flat<float>().data(),
-                 time_series_tensor.flat<float>().data(), resulting_voltages_tensor.flat<float>().data(), resulting_activations_tensor.flat<float>().data(),
+                 time_series_data.flat<float>().data(), resulting_voltages.flat<float>().data(), resulting_activations.flat<float>().data(),
                  partial_dE_dv_tensor.flat<float>().data(),
-                 W_rec.flat<float>().data());
+                 W_rec.flat<float>().data(),
+                 input_nan.flat<bool>().data(), recurrent_nan.flat<bool>().data());
 
         std::cout << "[INFO] Backward pass completed" << std::endl;
     }

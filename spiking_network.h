@@ -38,7 +38,7 @@ public:
                  int num_batches,
                  int num_neurons,
                  int num_input_channels,
-                 int num_timesteps,
+                 int num_time_steps,
                  float decay_factor,
                  float threshold_voltage,
                  float gradient_scaling_factor);
@@ -46,12 +46,13 @@ public:
     void operator()(::tensorflow::OpKernelContext* ctx, const GPUDevice &device,
                     float* dE_dW_in, float* dE_dW_rec,
                     float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations,
+                    float* current_spike_gradient, float* current_dv_k_dv_j, float* current_sum_over_k,
                     float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
-                    float* total_dE_dv,
-                    float* dE_dW_in_components, float* dE_dW_rec_components,
+                    float* dE_dW_in_component, float* dE_dW_rec_component,
                     const float* time_series_data, const float* resulting_voltages, const float* resulting_activations,
                     const float* partial_dE_dv,
-                    const float* W_rec);
+                    const float* W_rec,
+                    bool* input_nan, bool* recurrent_nan);
 
 private:
     cublasHandle_t cublas_handle;

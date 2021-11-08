@@ -146,15 +146,27 @@ __global__ void CopyToOutput(float *result_tensor,
     }
 }
 
-__global__ void CalculateTotalGradient(float* resulting_total_dE_dv,
-                                       const float decay_factor, const float v_th, const float gradient_scaling_factor,
-                                       const float* partial_dE_dv, const float* previous_total_dE_dv, const float* current_membrane_voltages,
-                                       const int num_neurons, const int num_batches,
-                                       const float* W_rec) {
+__global__ void ApproximateSpikeGradient(float* spike_gradient_approximation,
+                                         const float* current_membrane_voltages,
+                                         const float threshold_voltage, const float gradient_scaling_factor,
+                                         const float num_batches, const float num_neurons) {
 
-    float dv_k_dv_j;
-    float previous_dE_dv_k;
-    //float current_spike_gradient;
+    // batch index
+    int b = blockIdx.x * blockDim.x + threadIdx.x;
+    // neuron index
+    int n = blockIdx.y * blockDim.y + threadIdx.y;
+    // thread specific ID
+    int tID = b * num_neurons + n;
+
+    if (tID < num_batches * num_neurons) {
+        spike_gradient_approximation[tID] = gradient_scaling_factor *
+                fmaxf(0.0f, 1 - fabsf(current_membrane_voltages[tID] - threshold_voltage) / threshold_voltage);
+    }
+}
+
+__global__ void CalculateTotalGradient(float* resulting_total_dE_dv,
+                                       const float* current_partial_dE_dv, const float* current_sum_over_k,
+                                       const int num_batches, const int num_neurons) {
 
     // batch index
     int b = blockIdx.x * blockDim.x + threadIdx.x;
@@ -165,47 +177,99 @@ __global__ void CalculateTotalGradient(float* resulting_total_dE_dv,
 
     if (tID < num_batches * num_neurons) {
 
-        // partial derivative of loss function E wrt this neuron's membrane voltage
-        float total_dE_dv = partial_dE_dv[tID];
-
-
-        float current_spike_gradient = gradient_scaling_factor *
-                fmaxf(0.0f, 1 - fabsf(current_membrane_voltages[tID] - v_th) / v_th);
-
-        for (int k = 0; k < num_neurons; ++k) {
-
-            if (k == j) {
-                dv_k_dv_j = decay_factor + (W_rec[k * num_neurons + j] - v_th) * current_spike_gradient;
-            }
-            else {
-                dv_k_dv_j = W_rec[k * num_neurons + j] * current_spike_gradient;
-            }
-
-            previous_dE_dv_k = previous_total_dE_dv[b * num_neurons + k];
-
-            total_dE_dv += dv_k_dv_j * previous_dE_dv_k;
-        }
-
-        resulting_total_dE_dv[tID] = total_dE_dv;
+        resulting_total_dE_dv[tID] = current_partial_dE_dv[tID] + current_sum_over_k[tID];
     }
 
 }
 
-__global__ void SumUpComponents(float* output_matrix,
-                                const float* component_tensor,
-                                const int num_time_steps, const int size_first_dim, const int size_second_dim) {
+__global__ void CalculateVoltageGradient(float* dv_k_dv_j,
+                                         const float* spike_gradient_approximation, const float* recurrent_weights,
+                                         const float decay_factor, const float threshold_voltage,
+                                         const int num_batches, const int num_neurons) {
 
-    int first_dim_id = blockIdx.x * blockDim.x + threadIdx.x;
-    int second_dim_id = blockIdx.y * blockDim.y + threadIdx.y;
+    const int batch_ID = blockIdx.x;
+    const int k = blockIdx.y * blockDim.y + threadIdx.y;
+    const int j = blockIdx.z * blockDim.z + threadIdx.z;
+
+    const int tID = batch_ID * num_neurons * num_neurons + k * num_neurons + j;
+
+    if (tID < num_batches * num_neurons * num_neurons) {
+
+        if (k == j) {
+            // possible restucture: load W_rec at k, j into shared memory across batches,
+            // this would result in only one load from global memory and num_batches loads from shared memory
+            dv_k_dv_j[tID] = decay_factor + (recurrent_weights[k * num_neurons + j] - threshold_voltage) *
+                    spike_gradient_approximation[batch_ID * num_neurons + j];
+        }
+        else {
+            dv_k_dv_j[tID] = recurrent_weights[k * num_neurons + j] *
+                    spike_gradient_approximation[batch_ID * num_neurons + j];
+        }
+    }
+}
+
+__global__ void SumUpComponent(float* output_matrix,
+                               const float* component,
+                               const int size_first_dim, const int size_second_dim) {
+
+    const int first_dim_id = blockIdx.x * blockDim.x + threadIdx.x;
+    const int second_dim_id = blockIdx.y * blockDim.y + threadIdx.y;
     // thread ID index used to access data from array
-    int tID = first_dim_id * size_second_dim + second_dim_id;
+    const int tID = first_dim_id * size_second_dim + second_dim_id;
 
     if (tID < size_first_dim * size_second_dim) {
-        for (int t = 0; t < num_time_steps; ++t) {
-            output_matrix[tID] += component_tensor[t * size_first_dim * size_second_dim + tID];
-        }
+
+        output_matrix[tID] += component[tID];
     }
 }
+
+__global__ void CheckIfNanInput(bool *is_it_nan,
+                                const float* data,
+                                const int time_step, const int first_dim_size, const int second_dim_size) {
+
+    const int first_dim_ID = blockIdx.x * blockDim.x + threadIdx.x;
+    const int second_dim_ID = blockIdx.y * blockDim.y + threadIdx.y;
+    const int tID = first_dim_ID * second_dim_size + second_dim_ID;
+
+    if (tID < first_dim_size * second_dim_size) {
+        if (isnan(data[tID])) {
+            *is_it_nan = true;
+        }
+
+        __syncthreads();
+
+        if ((*is_it_nan) & (tID == 0)) {
+            printf("Timestep %d: Input weights are nan\n", time_step);
+            *is_it_nan = false;
+        }
+    }
+
+}
+
+__global__ void CheckIfNanRecurrent(bool *is_it_nan,
+                                    const float* data,
+                                    const int time_step, const int first_dim_size, const int second_dim_size) {
+
+    const int first_dim_ID = blockIdx.x * blockDim.x + threadIdx.x;
+    const int second_dim_ID = blockIdx.y * blockDim.y + threadIdx.y;
+    const int tID = first_dim_ID * second_dim_size + second_dim_ID;
+
+    if (tID < first_dim_size * second_dim_size) {
+        if (isnan(data[tID])) {
+            *is_it_nan = true;
+        }
+
+        __syncthreads();
+
+        if ((*is_it_nan) & (tID == 0)) {
+            printf("Timestep %d: Recurrent weights are nan\n", time_step);
+            *is_it_nan = false;
+        }
+    }
+
+}
+
+
 
 ForwardPass::ForwardPass(cublasHandle_t cublas_handle,
                          int num_batches,
@@ -234,6 +298,8 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     static float beta = 0.0f;
     //static cudaError_t exit_status;
 
+
+
     // ceiling division of the threads into the number of needed blocks
     int maximum_threads_per_block = 1024; // hard limit set by hardware
     int max_threads_per_dimension_of_block = 32; // sqrt of maximum_threads_per_block
@@ -255,7 +321,7 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     cublasSetStream(cublas_handle, device.stream());
     //cublasSetStream_v2(cublas_handle, device.stream());
 
-    printf("[INFO] Calculating batch matmul\n");
+    // printf("[INFO] Calculating batch matmul\n");
 
     // initial large GEMM of input time series data with input weights
     cublasSgemmStridedBatched(cublas_handle,
@@ -268,12 +334,13 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                               base_activity, num_neurons, num_batches * num_neurons,
                               num_time_steps);
 
-    printf("[INFO] Batch matmul completed\n");
+    // printf("[INFO] Batch matmul completed\n");
 
-    printf("[INFO] Running time steps\n");
+    // printf("[INFO] Running time steps\n");
 
     // iterate though the time series
     for (int t = 0; t < num_time_steps; t++) {
+
         CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_base_activity,
                                                                                base_activity, t,
                                                                                num_batches, num_neurons);
@@ -304,7 +371,7 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                               num_batches, num_neurons);
     }
 
-    printf("[INFO] Time steps completed\n");
+   // printf("[INFO] Time steps completed\n");
 }
 
 BackwardPass::BackwardPass(cublasHandle_t cublas_handle,
@@ -328,80 +395,180 @@ BackwardPass::BackwardPass(cublasHandle_t cublas_handle,
 void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                               float* dE_dW_in, float* dE_dW_rec,
                               float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations,
+                              float* current_spike_gradient, float* current_dv_k_dv_j, float* current_sum_over_k,
                               float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
-                              float* total_dE_dv,
-                              float* dE_dW_in_components, float* dE_dW_rec_components,
+                              float* dE_dW_in_component, float* dE_dW_rec_component,
                               const float* time_series_data, const float* resulting_voltages, const float* resulting_activations,
                               const float* partial_dE_dv,
-                              const float* W_rec) {
+                              const float* W_rec,
+                              bool* input_nan, bool* recurrent_nan) {
 
-    float alpha = 1.0f;
-    float beta = 0.0f;
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
 
     cublasSetStream_v2(cublas_handle, device.stream());
 
     // ceiling division of the threads into the number of needed blocks
-    int maximum_threads_per_block = 1024; // hard limit set by hardware
-    int max_threads_per_dimension_of_block = 32; // sqrt of maximum_threads_per_block
+    const int maximum_threads_per_block = 1024; // hard limit set by hardware
+    const int max_threads_per_dimension_of_block = 32; // sqrt of maximum_threads_per_block
 
     // ceiling division by max_threads_per_dimension_of_block
-    int num_neuron_blocks = (num_neurons + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
-    int num_batch_blocks = (num_batches + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
+    const int num_neuron_blocks = (num_neurons + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
+    const int num_batch_blocks = (num_batches + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
+    const int num_input_blocks = (num_input_channels + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
 
-    dim3 kernelGridSize(num_batch_blocks, num_neuron_blocks, 1);
-    dim3 kernelBlockSize(max_threads_per_dimension_of_block, max_threads_per_dimension_of_block, 1);
+    dim3 regularKernelGridSize(num_batch_blocks, num_neuron_blocks, 1);
+    dim3 inputWeightsGridSize = dim3(num_neuron_blocks, num_input_blocks, 1);
+    dim3 recurrentWeightsGridSize = dim3(num_neuron_blocks, num_neuron_blocks, 1);
+    dim3 voltageGradientGridSize(num_batches, num_neuron_blocks, num_neuron_blocks);
 
-    for (int t = num_time_steps - 1; t >= 0; --t) {
+    dim3 regularKernelBlockSize(max_threads_per_dimension_of_block, max_threads_per_dimension_of_block, 1);
+    dim3 voltageGradientBlockSize(1, max_threads_per_dimension_of_block, max_threads_per_dimension_of_block);
+
+    SetToValue<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_in,
+                                                                                     0.0,
+                                                                                     num_neurons, num_input_channels);
+
+    SetToValue<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
+                                                                                         0.0,
+                                                                                         num_neurons, num_neurons);
+
+    // First time step t = num_time_steps - 1
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
+                                                                                         time_series_data, num_time_steps - 1,
+                                                                                         num_batches, num_input_channels);
+
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
+                                                                                         resulting_activations, num_time_steps - 1,
+                                                                                         num_batches, num_neurons);
+
+    // At the last time step (t=num_timesteps - 1), the partial gradient is equal to the total gradient
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_total_dE_dv,
+                                                                                         partial_dE_dv, num_time_steps - 1,
+                                                                                         num_batches, num_neurons);
+
+    // use the total derivative to calculate the derivative wrt the different weights
+
+    // INPUT WEIGHTS
+
+    cublasSgemm_v2(cublas_handle,
+                   CUBLAS_OP_N, CUBLAS_OP_T,
+                   num_input_channels, num_neurons, num_batches,
+                   &alpha,
+                   current_input_data, num_input_channels,
+                   current_total_dE_dv, num_neurons,
+                   &beta,
+                   dE_dW_in_component, num_input_channels);
+
+    SumUpComponent<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_in,
+                                                                                         dE_dW_in_component,
+                                                                                         num_neurons, num_input_channels);
+    // RECURRENT WEIGHTS
+
+    cublasSgemm_v2(cublas_handle,
+                   CUBLAS_OP_N, CUBLAS_OP_T,
+                   num_neurons, num_neurons, num_batches,
+                   &alpha,
+                   current_neuron_activations, num_neurons,
+                   current_total_dE_dv, num_neurons,
+                   &beta,
+                   dE_dW_rec_component, num_neurons);
+
+    SumUpComponent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
+                                                                                             dE_dW_rec_component,
+                                                                                             num_neurons, num_neurons);
+
+    // Remaining time steps
+    for (int t = num_time_steps - 2; t >= 0; --t) {
+
+        CheckIfNanInput<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(input_nan,
+                                                                                              dE_dW_in,
+                                                                                              t, num_neurons, num_input_channels);
+
+        CheckIfNanRecurrent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(recurrent_nan,
+                                                                                                      dE_dW_rec,
+                                                                                                      t, num_neurons, num_neurons);
+
         // Select data
-        CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_input_data,
-                                                                               time_series_data, t,
-                                                                               num_batches, num_input_channels);
+        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
+                                                                                             time_series_data, t,
+                                                                                             num_batches, num_input_channels);
 
-        CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
-                                                                               resulting_voltages, t,
-                                                                               num_batches, num_neurons);
+        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
+                                                                                             resulting_voltages, t,
+                                                                                             num_batches, num_neurons);
 
-        CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
-                                                                               resulting_activations, t,
-                                                                               num_batches, num_neurons);
+        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
+                                                                                             resulting_activations, t,
+                                                                                             num_batches, num_neurons);
 
-        CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_partial_dE_dv,
-                                                                               partial_dE_dv, t,
-                                                                               num_batches, num_neurons);
+        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_partial_dE_dv,
+                                                                                             partial_dE_dv, t,
+                                                                                             num_batches, num_neurons);
 
-        // TODO: alternative implementation: last time step outside of for loop and the remaining calculations from
-        // TODO: t = num_time_steps - 2 till t = 0 in the for loop to avoid condition check in each iteration
-
-        if (t == num_time_steps - 1) {
-            // for the last time step, there is no previous total derivative, so it is set to 0
-            SetToValue<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(previous_total_dE_dv,
-                                                                                0.0,
-                                                                                num_batches,
-                                                                                num_neurons);
-        }
-
-        else {
-            CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(previous_total_dE_dv,
-                                                                                   total_dE_dv, t + 1,
-                                                                                   num_batches, num_neurons);
-        }
+        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(previous_total_dE_dv,
+                                                                                             current_total_dE_dv, 0,
+                                                                                             num_batches, num_neurons);
 
         // Calculate total derivative of loss function wrt the membrane voltages for this time step
-        CalculateTotalGradient<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(
-                current_total_dE_dv,
-                decay_factor, threshold_voltage, gradient_scaling_factor,
-                current_partial_dE_dv, previous_total_dE_dv, current_membrane_voltages,
-                num_neurons, num_batches,
-                W_rec);
+        ApproximateSpikeGradient<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_spike_gradient,
+                                                                                                        current_membrane_voltages,
+                                                                                                        threshold_voltage, gradient_scaling_factor,
+                                                                                                        num_batches, num_neurons);
 
-        // save result to intermediate tensor
-        CopyToOutput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(total_dE_dv,
-                                                                              current_total_dE_dv, t,
-                                                                              num_batches, num_neurons);
+        CalculateVoltageGradient<<<voltageGradientGridSize, voltageGradientBlockSize, 0, device.stream()>>>(current_dv_k_dv_j,
+                                                                                                            current_spike_gradient, W_rec,
+                                                                                                            decay_factor, threshold_voltage,
+                                                                                                            num_batches, num_neurons);
 
-        //previous_total_dE_dv = curent_total_dE_dv;
+        // sum over index k across all batches
+        cublasSgemmStridedBatched(cublas_handle,
+                                  CUBLAS_OP_N, CUBLAS_OP_N,
+                                  num_neurons, num_neurons, num_neurons,
+                                  &alpha,
+                                  current_dv_k_dv_j, num_neurons, num_neurons * num_neurons,
+                                  previous_total_dE_dv, num_neurons, num_neurons,
+                                  &beta,
+                                  current_sum_over_k, num_neurons, num_neurons,
+                                  num_batches);
+
+        // Addition of the partial derivative to the recurrent component
+        CalculateTotalGradient<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_total_dE_dv,
+                                                                                                      current_partial_dE_dv,
+                                                                                                      current_sum_over_k,
+                                                                                                      num_batches, num_neurons);
+        // use the total derivative to calculate the derivative wrt the different weights
+
+        // INPUT WEIGHTS
+
+        cublasSgemm_v2(cublas_handle,
+                       CUBLAS_OP_N, CUBLAS_OP_T,
+                       num_input_channels, num_neurons, num_batches,
+                       &alpha,
+                       current_input_data, num_input_channels,
+                       current_total_dE_dv, num_neurons,
+                       &beta,
+                       dE_dW_in_component, num_input_channels);
+
+        SumUpComponent<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_in,
+                                                                                             dE_dW_in_component,
+                                                                                             num_neurons, num_input_channels);
+        // RECURRENT WEIGHTS
+
+        cublasSgemm_v2(cublas_handle,
+                   CUBLAS_OP_N, CUBLAS_OP_T,
+                   num_neurons, num_neurons, num_batches,
+                   &alpha,
+                   current_neuron_activations, num_neurons,
+                   current_total_dE_dv, num_neurons,
+                   &beta,
+                   dE_dW_rec_component, num_neurons);
+
+        SumUpComponent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
+                                                                                                 dE_dW_rec_component,
+                                                                                                 num_neurons, num_neurons);
     }
-
+    /*
     // dot product of x(t) total_dE_dv(t) for each time step
     cublasSgemmStridedBatched(cublas_handle,
                               CUBLAS_OP_N, CUBLAS_OP_T,
@@ -413,7 +580,7 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                               dE_dW_in_components, num_neurons, num_input_channels * num_neurons,
                               num_time_steps);
 
-    // dot product of x(t) total_dE_dv(t) for each time step
+    // dot product of z(t) total_dE_dv(t) for each time step
     cublasSgemmStridedBatched(cublas_handle,
                               CUBLAS_OP_N, CUBLAS_OP_T,
                               num_neurons, num_neurons, num_batches,
@@ -425,16 +592,17 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                               num_time_steps);
 
     // Sum up the components to calculate dE_dW_in & dE_dW_rec
-    SumUpComponents<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(dE_dW_in_components,
-                                                                             dE_dW_in,
-                                                                             num_time_steps,
-                                                                             num_input_channels,
-                                                                             num_neurons);
+    SumUpComponents<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_in_components,
+                                                                                          dE_dW_in,
+                                                                                          num_time_steps,
+                                                                                          num_input_channels,
+                                                                                          num_neurons);
 
-    SumUpComponents<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(dE_dW_rec_components,
-                                                                             dE_dW_rec,
-                                                                             num_time_steps,
-                                                                             num_neurons,
-                                                                             num_neurons);
+    SumUpComponents<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec_components,
+                                                                                          dE_dW_rec,
+                                                                                          num_time_steps,
+                                                                                          num_neurons,
+                                                                                          num_neurons);
+                                                                                          */
 }
 #endif // GOOGLE_CUDA

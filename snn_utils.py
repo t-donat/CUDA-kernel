@@ -132,8 +132,7 @@ def MSE(expected_output, network_output):
     return np.sum(difference, axis=0) / num_time_steps
 
 
-def spike_gradient(membrane_voltages, threshold_voltage):
-    dampening_factor = 0.3
+def spike_gradient(membrane_voltages, threshold_voltage, dampening_factor):
 
     return dampening_factor * np.maximum(1 - np.abs(membrane_voltages - threshold_voltage) / threshold_voltage, 0.0)
 
@@ -141,7 +140,7 @@ def spike_gradient(membrane_voltages, threshold_voltage):
 def python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
                          partial_dE_dv,
                          recurrent_weights,
-                         threshold_voltage, decay_factor):
+                         threshold_voltage, decay_factor, dampening_factor):
 
     num_time_steps, num_batches, num_input_channels = time_series_data.shape
     *_, num_neurons = resulting_voltages.shape
@@ -156,7 +155,7 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
 
     for time_step in reversed(range(num_time_steps)):
         current_membrane_voltages = resulting_voltages[time_step]
-        spike_gradient_approximate = spike_gradient(current_membrane_voltages, threshold_voltage)
+        spike_gradient_approximate = spike_gradient(current_membrane_voltages, threshold_voltage, dampening_factor)
 
         for batch in range(num_batches):
             batchwise_spike_gradients = spike_gradient_approximate[batch]

@@ -155,14 +155,14 @@ expected_output = (time_series_data[:, :, 0] + time_series_data[:, :, 1]).reshap
 
 network_output = np.dot(resulting_voltages, output_weights.T)
 
-dE_dy = -2 * (expected_output - network_output)
+dE_dy = -2 / num_time_steps * (expected_output - network_output)
 partial_dy_dv = output_weights
 partial_dE_dv = np.dot(dE_dy, partial_dy_dv)
 partial_dE_dv_tensor = tf.convert_to_tensor(partial_dE_dv, dtype=float)
 
 expected_dE_dW_in, expected_dE_dW_rec = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
                                                              partial_dE_dv, recurrent_weights,
-                                                             threshold_voltage, decay_factor)
+                                                             threshold_voltage, decay_factor, dampening_factor)
 
 print("\nPython:")
 print("Input weights:")
@@ -175,15 +175,17 @@ print(f"Shape: {expected_dE_dW_rec.shape}")
 print("Result:")
 print(expected_dE_dW_rec, "\n")
 
-resulting_dE_dW_in, resulting_dE_dW_rec = spiking_module.backward_pass(partial_dE_dv_tensor,
-                                                                       recurrent_weights_tensor,
-                                                                       time_series_data_tensor,
-                                                                       resulting_voltages_tensor,
-                                                                       resulting_activations_tensor,
-                                                                       decay_factor=decay_factor,
-                                                                       threshold_voltage=threshold_voltage,
-                                                                       gradient_scaling_factor=gradient_scaling_factor)
+resulting_dE_dW_in_tensor, resulting_dE_dW_rec_tensor = spiking_module.backward_pass(partial_dE_dv_tensor,
+                                                                                     recurrent_weights_tensor,
+                                                                                     time_series_data_tensor,
+                                                                                     resulting_voltages_tensor,
+                                                                                     resulting_activations_tensor,
+                                                                                     decay_factor=decay_factor,
+                                                                                     threshold_voltage=threshold_voltage,
+                                                                                     gradient_scaling_factor=gradient_scaling_factor)
 
+resulting_dE_dW_in = resulting_dE_dW_in_tensor.numpy()
+resulting_dE_dW_rec = resulting_dE_dW_rec_tensor.numpy()
 
 print("\nCUDA:")
 print("Input weights:")
