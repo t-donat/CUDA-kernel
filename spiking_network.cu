@@ -164,24 +164,42 @@ __global__ void ApproximateSpikeGradient(float* spike_gradient_approximation,
     }
 }
 
-__global__ void CalculateTotalGradient(float* resulting_total_dE_dv,
-                                       const float* current_partial_dE_dv, const float* current_sum_over_k,
+__global__ void CalculateTotalGradient(float* current_total_dE_dv,
+                                       const float* current_partial_dE_dv, const float* previous_total_dE_dv,
+                                       const float* current_spike_gradient, const float* recurrent_weights,
+                                       const float decay_factor, const float threshold_voltage,
                                        const int num_batches, const int num_neurons) {
 
-    // batch index
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
-    // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
+    const int b = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    const int tID = b * num_neurons + j;
 
     if (tID < num_batches * num_neurons) {
 
-        resulting_total_dE_dv[tID] = current_partial_dE_dv[tID] + current_sum_over_k[tID];
-    }
+        float dE_dv_k, dv_k_dv_j;
 
+        float result = current_partial_dE_dv[tID];
+
+        for (int k = 0; k < num_neurons; ++k) {
+
+            dE_dv_k = previous_total_dE_dv[b * num_neurons + k];
+
+            if (k == j) {
+                dv_k_dv_j = decay_factor + (recurrent_weights[k * num_neurons + j] - threshold_voltage) * current_spike_gradient[tID];
+            }
+
+            else {
+                dv_k_dv_j = recurrent_weights[k * num_neurons + j] * current_spike_gradient[tID];
+            }
+
+            result += dE_dv_k * dv_k_dv_j;
+        }
+
+        current_total_dE_dv[tID] = result;
+    }
 }
 
+/*
 __global__ void CalculateVoltageGradient(float* dv_k_dv_j,
                                          const float* spike_gradient_approximation, const float* recurrent_weights,
                                          const float decay_factor, const float threshold_voltage,
@@ -208,6 +226,24 @@ __global__ void CalculateVoltageGradient(float* dv_k_dv_j,
     }
 }
 
+ __global__ void CalculateTotalGradient(float* resulting_total_dE_dv,
+                                       const float* current_partial_dE_dv, const float* current_sum_over_k,
+                                       const int num_batches, const int num_neurons) {
+
+    // batch index
+    int b = blockIdx.x * blockDim.x + threadIdx.x;
+    // neuron index
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    // thread ID index used to access data from array
+    int tID = b * num_neurons + j;
+
+    if (tID < num_batches * num_neurons) {
+
+        resulting_total_dE_dv[tID] = current_partial_dE_dv[tID] + current_sum_over_k[tID];
+    }
+
+}
+*/
 __global__ void SumUpComponent(float* output_matrix,
                                const float* component,
                                const int size_first_dim, const int size_second_dim) {
@@ -289,8 +325,7 @@ ForwardPass::ForwardPass(cublasHandle_t cublas_handle,
 
 void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                              const float *W_in, const float *W_rec,
-                             const float *time_series_data,
-                             float *base_activity,
+                             const float *time_series_data, float *base_activity,
                              float *current_membrane_voltages, float *current_neuron_activations, float *current_base_activity,
                              float *resulting_voltages, float *resulting_activations)
 {
@@ -395,13 +430,10 @@ BackwardPass::BackwardPass(cublasHandle_t cublas_handle,
 void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                               float* dE_dW_in, float* dE_dW_rec,
                               float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations,
-                              float* current_spike_gradient, float* current_dv_k_dv_j, float* current_sum_over_k,
-                              float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
+                              float* current_spike_gradient, float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
                               float* dE_dW_in_component, float* dE_dW_rec_component,
                               const float* time_series_data, const float* resulting_voltages, const float* resulting_activations,
-                              const float* partial_dE_dv,
-                              const float* W_rec,
-                              bool* input_nan, bool* recurrent_nan) {
+                              const float* partial_dE_dv, const float* W_rec) {
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
@@ -420,10 +452,10 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     dim3 regularKernelGridSize(num_batch_blocks, num_neuron_blocks, 1);
     dim3 inputWeightsGridSize = dim3(num_neuron_blocks, num_input_blocks, 1);
     dim3 recurrentWeightsGridSize = dim3(num_neuron_blocks, num_neuron_blocks, 1);
-    dim3 voltageGradientGridSize(num_batches, num_neuron_blocks, num_neuron_blocks);
+    //dim3 voltageGradientGridSize(num_batches, num_neuron_blocks, num_neuron_blocks);
 
     dim3 regularKernelBlockSize(max_threads_per_dimension_of_block, max_threads_per_dimension_of_block, 1);
-    dim3 voltageGradientBlockSize(1, max_threads_per_dimension_of_block, max_threads_per_dimension_of_block);
+    // dim3 voltageGradientBlockSize(1, max_threads_per_dimension_of_block, max_threads_per_dimension_of_block);
 
     SetToValue<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_in,
                                                                                      0.0,
@@ -432,6 +464,8 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     SetToValue<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
                                                                                          0.0,
                                                                                          num_neurons, num_neurons);
+
+
 
     // First time step t = num_time_steps - 1
     CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
@@ -446,6 +480,7 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_total_dE_dv,
                                                                                          partial_dE_dv, num_time_steps - 1,
                                                                                          num_batches, num_neurons);
+
 
     // use the total derivative to calculate the derivative wrt the different weights
 
@@ -480,7 +515,7 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
 
     // Remaining time steps
     for (int t = num_time_steps - 2; t >= 0; --t) {
-
+        /*
         CheckIfNanInput<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(input_nan,
                                                                                               dE_dW_in,
                                                                                               t, num_neurons, num_input_channels);
@@ -488,6 +523,8 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
         CheckIfNanRecurrent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(recurrent_nan,
                                                                                                       dE_dW_rec,
                                                                                                       t, num_neurons, num_neurons);
+
+         */
 
         // Select data
         CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
@@ -516,6 +553,17 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                                         threshold_voltage, gradient_scaling_factor,
                                                                                                         num_batches, num_neurons);
 
+        CalculateTotalGradient<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_total_dE_dv,
+                                                                                                      current_partial_dE_dv, previous_total_dE_dv,
+                                                                                                      current_spike_gradient, W_rec,
+                                                                                                      decay_factor, threshold_voltage,
+                                                                                                      num_batches, num_neurons);
+
+        /*
+         * OLD CODE FOR CALCULATING THE TOTAL GRADIENT
+         *
+         * from backward pass function signature
+         * float* current_dv_k_dv_j, float* current_sum_over_k,
         CalculateVoltageGradient<<<voltageGradientGridSize, voltageGradientBlockSize, 0, device.stream()>>>(current_dv_k_dv_j,
                                                                                                             current_spike_gradient, W_rec,
                                                                                                             decay_factor, threshold_voltage,
@@ -537,6 +585,8 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                                       current_partial_dE_dv,
                                                                                                       current_sum_over_k,
                                                                                                       num_batches, num_neurons);
+        */
+
         // use the total derivative to calculate the derivative wrt the different weights
 
         // INPUT WEIGHTS

@@ -15,9 +15,8 @@ public:
 
     void operator()(::tensorflow::OpKernelContext* ctx, const GPUDevice &device,
                     const float *W_in, const float *W_rec,
-                    const float *time_series_data,
-                    float *base_activity,
-                    float *current_v, float *current_z, float *current_base_activity,
+                    const float *time_series_data, float *base_activity,
+                    float *current_membrane_voltages, float *current_neuron_activations, float *current_base_activity,
                     float *resulting_voltages, float *resulting_activities);
 
 private:
@@ -46,13 +45,10 @@ public:
     void operator()(::tensorflow::OpKernelContext* ctx, const GPUDevice &device,
                     float* dE_dW_in, float* dE_dW_rec,
                     float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations,
-                    float* current_spike_gradient, float* current_dv_k_dv_j, float* current_sum_over_k,
-                    float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
+                    float* current_spike_gradient, float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
                     float* dE_dW_in_component, float* dE_dW_rec_component,
                     const float* time_series_data, const float* resulting_voltages, const float* resulting_activations,
-                    const float* partial_dE_dv,
-                    const float* W_rec,
-                    bool* input_nan, bool* recurrent_nan);
+                    const float* partial_dE_dv, const float* W_rec);
 
 private:
     cublasHandle_t cublas_handle;

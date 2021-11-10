@@ -7,13 +7,15 @@ import os
 
 from snn_utils import initialize_weights, initialize_data, convert_to_tensors
 from snn_utils import python_forward_pass, MSE, python_backward_pass
-from snn_utils import verify_forward_pass, print_voltage_discrepancies, save_to_pickle_files
+from snn_utils import verify_forward_pass, print_voltage_discrepancies
+from snn_utils import verify_backward_pass, print_weight_discrepancies
+from snn_utils import save_to_pickle_files
 
 # -------------------------------------------------------------------
 # CONFIG
 # -------------------------------------------------------------------
 
-verbose = False
+verbose = True
 save_data = True
 
 # -------------------------------------------------------------------
@@ -94,24 +96,24 @@ python_duration = time.time() - start
 if verbose:
     print("Forward Pass Results: ")
 
-    if cuda_voltages_ok:
+    #if cuda_voltages_ok:
 
-        print("Membrane voltages:")
-        print(resulting_voltages[:, 0])
+    #    print("Membrane voltages:")
+    #    print(resulting_voltages[:, 0])
 
-        print("\n--------------------------\n")
+    #    print("\n--------------------------\n")
 
-        print("Neuron activations")
-        print(resulting_activations[:, 0])
+    #    print("Neuron activations")
+    #    print(resulting_activations[:, 0])
 
-        print("Activated voltages")
+    #   print("Activated voltages")
 
-        print("\n--------------------------\n")
+    #    print("\n--------------------------\n")
 
-        print(resulting_voltages[:, 0][resulting_activations[:, 0].astype(bool)])
+    #    print(resulting_voltages[:, 0][resulting_activations[:, 0].astype(bool)])
 
-    else:
-        print('Voltages do not match within batches for each neuron')
+    #else:
+    #    print('Voltages do not match within batches for each neuron')
 
     print("\nCUDA Implementation:")
     print(f"Are all voltages close to equal between batches? {cuda_voltages_ok}")
@@ -131,20 +133,6 @@ if verbose:
     print(f"\nRuntime CUDA OP: {op_duration}")
     print(f"Runtime native Python: {python_duration}")
 
-if save_data:
-    hyperparameters = np.array((num_time_steps,
-                                num_batches,
-                                num_neurons,
-                                num_input_channels,
-                                num_output_channels,
-                                decay_factor,
-                                threshold_voltage))
-
-    save_to_pickle_files(hyperparameters,
-                         input_weights, recurrent_weights, output_weights,
-                         time_series_data,
-                         resulting_voltages, resulting_activations)
-
 
 # -------------------------------------------------------------------
 # BACKWARD PASS
@@ -160,20 +148,9 @@ partial_dy_dv = output_weights
 partial_dE_dv = np.dot(dE_dy, partial_dy_dv)
 partial_dE_dv_tensor = tf.convert_to_tensor(partial_dE_dv, dtype=float)
 
-expected_dE_dW_in, expected_dE_dW_rec = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
+expected_dE_dW_in, expected_dE_dW_rec, expected_spike_gradients = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
                                                              partial_dE_dv, recurrent_weights,
-                                                             threshold_voltage, decay_factor, dampening_factor)
-
-print("\nPython:")
-print("Input weights:")
-print(f"Shape: {expected_dE_dW_in.shape}")
-print("Result:")
-print(expected_dE_dW_in, "\n")
-
-print("Recurrent weights:")
-print(f"Shape: {expected_dE_dW_rec.shape}")
-print("Result:")
-print(expected_dE_dW_rec, "\n")
+                                                             threshold_voltage, decay_factor, gradient_scaling_factor)
 
 resulting_dE_dW_in_tensor, resulting_dE_dW_rec_tensor = spiking_module.backward_pass(partial_dE_dv_tensor,
                                                                                      recurrent_weights_tensor,
@@ -187,13 +164,31 @@ resulting_dE_dW_in_tensor, resulting_dE_dW_rec_tensor = spiking_module.backward_
 resulting_dE_dW_in = resulting_dE_dW_in_tensor.numpy()
 resulting_dE_dW_rec = resulting_dE_dW_rec_tensor.numpy()
 
-print("\nCUDA:")
-print("Input weights:")
-print(f"Shape: {resulting_dE_dW_in.shape}")
-print("Result:")
-print(resulting_dE_dW_in, "\n")
+input_weights_match, recurrent_weights_match = verify_backward_pass(expected_dE_dW_in, expected_dE_dW_rec,
+                                                                    resulting_dE_dW_in, resulting_dE_dW_rec)
 
-print("Recurrent weights:")
-print(f"Shape: {resulting_dE_dW_rec.shape}")
-print("Result:")
-print(resulting_dE_dW_rec, "\n")
+if verbose:
+    print("\nBackward Pass Results: ")
+    print(f"Do the input weights match between Python and CUDA: {input_weights_match}")
+    print(f"Do the recurrent weights match between Python and CUDA: {recurrent_weights_match}")
+
+# -------------------------------------------------------------------
+# FINISH UP
+# -------------------------------------------------------------------
+
+
+if save_data:
+    hyperparameters = np.array((num_time_steps,
+                                num_batches,
+                                num_neurons,
+                                num_input_channels,
+                                num_output_channels,
+                                decay_factor,
+                                threshold_voltage))
+
+    save_to_pickle_files(hyperparameters,
+                         input_weights, recurrent_weights, output_weights,
+                         time_series_data,
+                         resulting_voltages, resulting_activations)
+
+

@@ -68,21 +68,21 @@ def save_to_pickle_files(network_hyperparameters,
 
 def initialize_weights(num_neurons, num_input_channels, num_output_channels):
 
-    input_weights = np.random.randn(num_neurons, num_input_channels) * 0.1
+    input_weights = np.random.randn(num_neurons, num_input_channels).astype(np.single) * 0.1
 
-    recurrent_weights = np.random.randn(num_neurons, num_neurons) * 0.1
+    recurrent_weights = np.random.randn(num_neurons, num_neurons).astype(np.single) * 0.1
     np.fill_diagonal(recurrent_weights, 0.0)
 
-    output_weights = np.ones((num_output_channels, num_neurons))
+    output_weights = np.ones((num_output_channels, num_neurons)).astype(np.single)
 
     return input_weights, recurrent_weights, output_weights
 
 
 def initialize_data(num_time_steps, num_batches, num_input_channels):
-    x = np.arange(num_time_steps) * 2 / num_time_steps
-    time_series_data = np.array([np.sin(2 / 3 * np.pi * x), np.cos(np.pi * x)]).T
+    x = np.linspace(0, 2 * np.pi, num_time_steps)
+    time_series_data = np.array([np.sin(2 / 3 * x), np.cos(x)]).T
     time_series_data_batch = time_series_data.reshape((num_time_steps, 1, num_input_channels))
-    time_series_data_batch = np.repeat(time_series_data_batch, num_batches, axis=1)
+    time_series_data_batch = np.repeat(time_series_data_batch, num_batches, axis=1).astype(np.single)
 
     return time_series_data_batch
 
@@ -178,7 +178,7 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
 
         previous_total_dE_dv = current_total_dE_dv
 
-    return dE_dW_in, dE_dW_rec
+    return dE_dW_in, dE_dW_rec, all_total_dE_dv
 
 
 def verify_forward_pass(expected_voltages, expected_activations, calculated_voltages, calculated_activations):
@@ -221,3 +221,15 @@ def print_voltage_discrepancies(expected_voltages, calculated_voltages):
 
     print(
         f"\nTotal number of discrepancies: {num_discrepancies} ({round(num_discrepancies / num_values_per_batch * 100, 2)}% of all values)", )
+
+
+def verify_backward_pass(expected_input_gradient, expected_recurrent_gradient,
+                         calculated_input_gradient, calculated_recurrent_gradient):
+
+    input_weights_match = np.allclose(expected_input_gradient, calculated_input_gradient)
+    recurrent_weights_match = np.allclose(expected_recurrent_gradient, calculated_recurrent_gradient)
+
+    return input_weights_match, recurrent_weights_match
+
+def print_weight_discrepancies():
+    pass
