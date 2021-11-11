@@ -259,6 +259,7 @@ __global__ void SumUpComponent(float* output_matrix,
     }
 }
 
+/*
 __global__ void CheckIfNanInput(bool *is_it_nan,
                                 const float* data,
                                 const int time_step, const int first_dim_size, const int second_dim_size) {
@@ -305,7 +306,7 @@ __global__ void CheckIfNanRecurrent(bool *is_it_nan,
 
 }
 
-
+*/
 
 ForwardPass::ForwardPass(cublasHandle_t cublas_handle,
                          int num_batches,
@@ -353,8 +354,7 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     SetToValue<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_neuron_activations, 0.0f,
                                                                         num_batches, num_neurons);
 
-    cublasSetStream(cublas_handle, device.stream());
-    //cublasSetStream_v2(cublas_handle, device.stream());
+    cublasSetStream_v2(cublas_handle, device.stream());
 
     // printf("[INFO] Calculating batch matmul\n");
 
@@ -450,6 +450,7 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     const int num_input_blocks = (num_input_channels + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
 
     dim3 regularKernelGridSize(num_batch_blocks, num_neuron_blocks, 1);
+    dim3 inputDataGridSize(num_batch_blocks, num_input_blocks, 1);
     dim3 inputWeightsGridSize = dim3(num_neuron_blocks, num_input_blocks, 1);
     dim3 recurrentWeightsGridSize = dim3(num_neuron_blocks, num_neuron_blocks, 1);
     //dim3 voltageGradientGridSize(num_batches, num_neuron_blocks, num_neuron_blocks);
@@ -480,7 +481,6 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_total_dE_dv,
                                                                                          partial_dE_dv, num_time_steps - 1,
                                                                                          num_batches, num_neurons);
-
 
     // use the total derivative to calculate the derivative wrt the different weights
 
@@ -513,23 +513,26 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                              dE_dW_rec_component,
                                                                                              num_neurons, num_neurons);
 
+    /*
+    // FOR TESTING
+    CopyToOutput<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(input_gradients,
+                                                                                       dE_dW_in_component, num_time_steps - 1,
+                                                                                       num_neurons, num_input_channels);
+
+    CopyToOutput<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(recurrent_gradients,
+                                                                                           dE_dW_rec_component, num_time_steps - 1,
+                                                                                           num_neurons, num_neurons);
+
+    // FOR TESTING
+    */
+
     // Remaining time steps
     for (int t = num_time_steps - 2; t >= 0; --t) {
-        /*
-        CheckIfNanInput<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(input_nan,
-                                                                                              dE_dW_in,
-                                                                                              t, num_neurons, num_input_channels);
-
-        CheckIfNanRecurrent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(recurrent_nan,
-                                                                                                      dE_dW_rec,
-                                                                                                      t, num_neurons, num_neurons);
-
-         */
 
         // Select data
-        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
-                                                                                             time_series_data, t,
-                                                                                             num_batches, num_input_channels);
+        CopyFromInput<<<inputDataGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
+                                                                                         time_series_data, t,
+                                                                                         num_batches, num_input_channels);
 
         CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
                                                                                              resulting_voltages, t,
@@ -617,42 +620,19 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
         SumUpComponent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
                                                                                                  dE_dW_rec_component,
                                                                                                  num_neurons, num_neurons);
+
+        /*
+        // FOR TESTING
+        CopyToOutput<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(input_gradients,
+                                                                                           dE_dW_in_component, t,
+                                                                                           num_neurons, num_input_channels);
+
+        CopyToOutput<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(recurrent_gradients,
+                                                                                               dE_dW_rec_component, t,
+                                                                                               num_neurons, num_neurons);
+
+        // FOR TESTING
+        */
     }
-    /*
-    // dot product of x(t) total_dE_dv(t) for each time step
-    cublasSgemmStridedBatched(cublas_handle,
-                              CUBLAS_OP_N, CUBLAS_OP_T,
-                              num_neurons, num_input_channels, num_batches,
-                              &alpha,
-                              total_dE_dv, num_neurons, num_neurons * num_batches,
-                              time_series_data, num_input_channels, num_input_channels * num_batches,
-                              &beta,
-                              dE_dW_in_components, num_neurons, num_input_channels * num_neurons,
-                              num_time_steps);
-
-    // dot product of z(t) total_dE_dv(t) for each time step
-    cublasSgemmStridedBatched(cublas_handle,
-                              CUBLAS_OP_N, CUBLAS_OP_T,
-                              num_neurons, num_neurons, num_batches,
-                              &alpha,
-                              total_dE_dv, num_neurons, num_neurons * num_batches,
-                              resulting_activations, num_neurons, num_neurons * num_batches,
-                              &beta,
-                              dE_dW_rec_components, num_neurons, num_neurons * num_neurons,
-                              num_time_steps);
-
-    // Sum up the components to calculate dE_dW_in & dE_dW_rec
-    SumUpComponents<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_in_components,
-                                                                                          dE_dW_in,
-                                                                                          num_time_steps,
-                                                                                          num_input_channels,
-                                                                                          num_neurons);
-
-    SumUpComponents<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec_components,
-                                                                                          dE_dW_rec,
-                                                                                          num_time_steps,
-                                                                                          num_neurons,
-                                                                                          num_neurons);
-                                                                                          */
 }
 #endif // GOOGLE_CUDA

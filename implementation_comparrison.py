@@ -7,8 +7,8 @@ import os
 
 from snn_utils import initialize_weights, initialize_data, convert_to_tensors
 from snn_utils import python_forward_pass, MSE, python_backward_pass
-from snn_utils import verify_forward_pass, print_voltage_discrepancies
-from snn_utils import verify_backward_pass, print_weight_discrepancies
+from snn_utils import verify_forward_pass, verify_backward_pass
+from snn_utils import print_voltage_discrepancies, print_input_weight_discrepancies, print_recurrent_weight_discrepancies
 from snn_utils import save_to_pickle_files
 
 # -------------------------------------------------------------------
@@ -16,16 +16,16 @@ from snn_utils import save_to_pickle_files
 # -------------------------------------------------------------------
 
 verbose = True
-save_data = True
+save_data = False
 
 # -------------------------------------------------------------------
 # HYPERPARAMETERS
 # -------------------------------------------------------------------
 
 
-num_time_steps = 100
+num_time_steps = 1000
 num_batches = 4
-num_neurons = 16
+num_neurons = 128
 
 num_input_channels = 2  # currently only supports 2
 num_output_channels = 1
@@ -67,10 +67,10 @@ resulting_voltages_tensor, resulting_activations_tensor = spiking_module.forward
                                                                                       decay_factor=decay_factor,
                                                                                       threshold_voltage=threshold_voltage)
 
-op_duration = time.time() - start
+cuda_forward_duration = time.time() - start
 
-resulting_voltages = resulting_voltages_tensor.numpy()
-resulting_activations = resulting_activations_tensor.numpy()
+resulting_voltages = resulting_voltages_tensor.numpy().astype(np.single)
+resulting_activations = resulting_activations_tensor.numpy().astype(np.single)
 
 # Python implementation to check against:
 
@@ -80,7 +80,42 @@ expected_voltages, expected_activations = python_forward_pass(input_weights, rec
                                                               time_series_data,
                                                               decay_factor, threshold_voltage)
 
-python_duration = time.time() - start
+python_forward_duration = time.time() - start
+
+# -------------------------------------------------------------------
+# BACKWARD PASS
+# -------------------------------------------------------------------
+expected_output = (time_series_data[:, :, 0] + time_series_data[:, :, 1]).reshape(num_time_steps,
+                                                                                  num_batches,
+                                                                                  num_output_channels)
+
+network_output = np.dot(resulting_voltages, output_weights.T)
+
+dE_dy = -2 / num_time_steps * (expected_output - network_output)
+partial_dy_dv = output_weights
+partial_dE_dv = np.dot(dE_dy, partial_dy_dv).astype(np.single)
+partial_dE_dv_tensor = tf.convert_to_tensor(partial_dE_dv, dtype=float)
+
+start = time.time()
+expected_dE_dW_in, expected_dE_dW_rec = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
+                                                             partial_dE_dv, recurrent_weights,
+                                                             threshold_voltage, decay_factor, gradient_scaling_factor)
+python_backward_duration = time.time() - start
+
+start = time.time()
+resulting_dE_dW_in_tensor, resulting_dE_dW_rec_tensor = spiking_module.backward_pass(partial_dE_dv_tensor,
+                                                                                     recurrent_weights_tensor,
+                                                                                     time_series_data_tensor,
+                                                                                     resulting_voltages_tensor,
+                                                                                     resulting_activations_tensor,
+                                                                                     decay_factor=decay_factor,
+                                                                                     threshold_voltage=threshold_voltage,
+                                                                                     gradient_scaling_factor=gradient_scaling_factor)
+
+cuda_backward_duration = time.time() - start
+
+resulting_dE_dW_in = resulting_dE_dW_in_tensor.numpy()
+resulting_dE_dW_rec = resulting_dE_dW_rec_tensor.numpy()
 
 # -------------------------------------------------------------------
 # VALIDATING THE RESULTS
@@ -93,6 +128,9 @@ python_duration = time.time() - start
                                                           resulting_voltages,
                                                           resulting_activations)
 
+
+input_weights_match, recurrent_weights_match = verify_backward_pass(expected_dE_dW_in, expected_dE_dW_rec,
+                                                                    resulting_dE_dW_in, resulting_dE_dW_rec)
 if verbose:
     print("Forward Pass Results: ")
 
@@ -130,52 +168,32 @@ if verbose:
     if not voltages_match:
         print_voltage_discrepancies(expected_voltages, resulting_voltages)
 
-    print(f"\nRuntime CUDA OP: {op_duration}")
-    print(f"Runtime native Python: {python_duration}")
-
-
-# -------------------------------------------------------------------
-# BACKWARD PASS
-# -------------------------------------------------------------------
-expected_output = (time_series_data[:, :, 0] + time_series_data[:, :, 1]).reshape(num_time_steps,
-                                                                                  num_batches,
-                                                                                  num_output_channels)
-
-network_output = np.dot(resulting_voltages, output_weights.T)
-
-dE_dy = -2 / num_time_steps * (expected_output - network_output)
-partial_dy_dv = output_weights
-partial_dE_dv = np.dot(dE_dy, partial_dy_dv)
-partial_dE_dv_tensor = tf.convert_to_tensor(partial_dE_dv, dtype=float)
-
-expected_dE_dW_in, expected_dE_dW_rec, expected_spike_gradients = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
-                                                             partial_dE_dv, recurrent_weights,
-                                                             threshold_voltage, decay_factor, gradient_scaling_factor)
-
-resulting_dE_dW_in_tensor, resulting_dE_dW_rec_tensor = spiking_module.backward_pass(partial_dE_dv_tensor,
-                                                                                     recurrent_weights_tensor,
-                                                                                     time_series_data_tensor,
-                                                                                     resulting_voltages_tensor,
-                                                                                     resulting_activations_tensor,
-                                                                                     decay_factor=decay_factor,
-                                                                                     threshold_voltage=threshold_voltage,
-                                                                                     gradient_scaling_factor=gradient_scaling_factor)
-
-resulting_dE_dW_in = resulting_dE_dW_in_tensor.numpy()
-resulting_dE_dW_rec = resulting_dE_dW_rec_tensor.numpy()
-
-input_weights_match, recurrent_weights_match = verify_backward_pass(expected_dE_dW_in, expected_dE_dW_rec,
-                                                                    resulting_dE_dW_in, resulting_dE_dW_rec)
-
-if verbose:
     print("\nBackward Pass Results: ")
     print(f"Do the input weights match between Python and CUDA: {input_weights_match}")
     print(f"Do the recurrent weights match between Python and CUDA: {recurrent_weights_match}")
 
+    if not input_weights_match:
+        print_input_weight_discrepancies(expected_dE_dW_in, resulting_dE_dW_in)
+
+    if not recurrent_weights_match:
+        print_recurrent_weight_discrepancies(expected_dE_dW_rec, resulting_dE_dW_rec)
+
+    print("\nRuntimes:")
+    print("Forward Pass")
+    print(f"Runtime CUDA OP: {round(cuda_forward_duration, 5)}")
+    print(f"Runtime native Python: {round(python_forward_duration, 5)}")
+
+    print("\nBackward Pass")
+    print(f"Runtime CUDA OP: {round(cuda_backward_duration, 5)}")
+    print(f"Runtime native Python: {round(python_backward_duration, 5)}")
+
+    print("\nTotal Runtimes:")
+    print(f"CUDA: {round(cuda_forward_duration + cuda_backward_duration, 5)}")
+    print(f"Python: {round(python_forward_duration + python_backward_duration, 5)}")
+
 # -------------------------------------------------------------------
 # FINISH UP
 # -------------------------------------------------------------------
-
 
 if save_data:
     hyperparameters = np.array((num_time_steps,
@@ -189,6 +207,7 @@ if save_data:
     save_to_pickle_files(hyperparameters,
                          input_weights, recurrent_weights, output_weights,
                          time_series_data,
-                         resulting_voltages, resulting_activations)
+                         resulting_voltages, resulting_activations,
+                         resulting_dE_dW_in, resulting_dE_dW_rec)
 
 

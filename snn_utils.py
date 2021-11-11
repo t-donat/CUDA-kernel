@@ -36,6 +36,7 @@ def save_to_pickle_files(network_hyperparameters,
                          input_weights, recurrent_weights, output_weights,
                          time_series_data,
                          resulting_voltages, resulting_activations,
+                         resulting_input_gradient, resulting_recurrent_gradient,
                          file_directory="./data/pickled_data"):
 
     # write data to output files
@@ -62,6 +63,12 @@ def save_to_pickle_files(network_hyperparameters,
 
     with open(os.path.join(file_directory, "resulting_activations.p"), "wb") as pickle_file:
         pickle.dump(resulting_activations, pickle_file)
+
+    with open(os.path.join(file_directory, "resulting_input_gradient.p"), "wb") as pickle_file:
+        pickle.dump(resulting_input_gradient, pickle_file)
+
+    with open(os.path.join(file_directory, "resulting_recurrent_gradient.p"), "wb") as pickle_file:
+        pickle.dump(resulting_recurrent_gradient, pickle_file)
 
     print("\nSuccessfully saved to pickle files!")
 
@@ -151,7 +158,7 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
     dE_dW_in = np.zeros((num_neurons, num_input_channels))
     dE_dW_rec = np.zeros((num_neurons, num_neurons))
 
-    all_total_dE_dv = np.zeros((num_time_steps, num_batches, num_neurons))
+    # all_total_dE_dv = np.zeros((num_time_steps, num_batches, num_neurons))
 
     for time_step in reversed(range(num_time_steps)):
         current_membrane_voltages = resulting_voltages[time_step]
@@ -168,7 +175,7 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
         current_partial_dE_dv = partial_dE_dv[time_step]
         current_total_dE_dv = current_partial_dE_dv + sum_over_k
 
-        all_total_dE_dv[time_step] = current_total_dE_dv
+        # all_total_dE_dv[time_step] = current_total_dE_dv
 
         dE_dW_in_component = np.dot(current_total_dE_dv.T, time_series_data[time_step])
         dE_dW_rec_component = np.dot(current_total_dE_dv.T, resulting_activations[time_step])
@@ -178,7 +185,7 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
 
         previous_total_dE_dv = current_total_dE_dv
 
-    return dE_dW_in, dE_dW_rec, all_total_dE_dv
+    return dE_dW_in, dE_dW_rec
 
 
 def verify_forward_pass(expected_voltages, expected_activations, calculated_voltages, calculated_activations):
@@ -196,6 +203,9 @@ def verify_forward_pass(expected_voltages, expected_activations, calculated_volt
 
 
 def print_voltage_discrepancies(expected_voltages, calculated_voltages):
+
+    # epsilon = 1e-5  # For numerical stability
+
     print("\nMembrane voltage discrepancies (larger than 10⁻⁸):\n")
 
     num_time_steps, num_batches, num_neurons = expected_voltages.shape
@@ -221,6 +231,58 @@ def print_voltage_discrepancies(expected_voltages, calculated_voltages):
 
     print(
         f"\nTotal number of discrepancies: {num_discrepancies} ({round(num_discrepancies / num_values_per_batch * 100, 2)}% of all values)", )
+
+
+def print_input_weight_discrepancies(expected_weights, calculated_weights):
+
+    epsilon = 1e-6  # For numerical stability
+
+    print("\nInput weights RELATIVE discrepancies:\n")
+
+    absolute_differences = np.abs(calculated_weights - expected_weights)
+    relative_differences = np.abs(absolute_differences / (expected_weights + epsilon))
+    different_spots = np.invert(np.isclose(expected_weights, calculated_weights))
+    discrepancy_values = relative_differences[different_spots]
+
+    orders_of_magnitude = np.floor(np.log10(discrepancy_values)).astype(int)
+    unique_orders_of_magnitude, magnitude_counts = np.unique(orders_of_magnitude, return_counts=True)
+
+    num_discrepancies = discrepancy_values.size
+
+    print('Order of Magnitude \tNumber of samples \tPercentage of discrepancies')
+    for current_magnitude, current_counts in zip(unique_orders_of_magnitude, magnitude_counts):
+        print(f"{current_magnitude} \t\t\t{current_counts} \t\t\t{round(current_counts / num_discrepancies * 100, 2)}%")
+
+    order_of_magnitude_weights = np.floor(np.log10(np.abs(expected_weights) + epsilon)).astype(int)
+
+    print(f"\nMedian order of magnitude of the weights: {np.median(order_of_magnitude_weights)}")
+    print(f"Total number of discrepancies: {num_discrepancies} ({round(num_discrepancies / expected_weights.size * 100, 2)}% of all values)")
+
+
+def print_recurrent_weight_discrepancies(expected_weights, calculated_weights):
+
+    epsilon = 1e-6  # For numerical stability
+
+    print("\nRecurrent weights RELATIVE discrepancies:\n")
+
+    absolute_differences = np.abs(calculated_weights - expected_weights)
+    relative_differences = np.abs(absolute_differences / (expected_weights + epsilon))
+    different_spots = np.invert(np.isclose(expected_weights, calculated_weights))
+    discrepancy_values = relative_differences[different_spots]
+
+    orders_of_magnitude = np.floor(np.log10(discrepancy_values)).astype(int)
+    unique_orders_of_magnitude, magnitude_counts = np.unique(orders_of_magnitude, return_counts=True)
+
+    num_discrepancies = discrepancy_values.size
+
+    print('Order of Magnitude \tNumber of samples \tPercentage of discrepancies')
+    for current_magnitude, current_counts in zip(unique_orders_of_magnitude, magnitude_counts):
+        print(f"{current_magnitude} \t\t\t{current_counts} \t\t\t{round(current_counts / num_discrepancies * 100, 2)}%")
+
+    order_of_magnitude_weights = np.floor(np.log10(np.abs(expected_weights) + epsilon)).astype(int)
+
+    print(f"\nMedian order of magnitude of the weights: {np.median(order_of_magnitude_weights)}")
+    print(f"Total number of discrepancies: {num_discrepancies} ({round(num_discrepancies / expected_weights.size * 100, 2)}% of all values)")
 
 
 def verify_backward_pass(expected_input_gradient, expected_recurrent_gradient,
