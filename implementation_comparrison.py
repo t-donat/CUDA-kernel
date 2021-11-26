@@ -47,12 +47,11 @@ time_series_data = initialize_data(num_time_steps,
                                    num_batches,
                                    num_input_channels)
 
-tensor_conversions = convert_to_tensors(input_weights,
-                                        recurrent_weights,
-                                        output_weights,
-                                        time_series_data)
+(input_weights_tensor, recurrent_weights_tensor,
+    output_weights_tensor, time_series_data_tensor) = convert_to_tensors(input_weights, recurrent_weights,
+                                                                         output_weights,  time_series_data)
 
-input_weights_tensor, recurrent_weights_tensor, output_weights_tensor, time_series_data_tensor = tensor_conversions
+membrane_decay_factors = np.ones((num_neurons, 1))
 
 # -------------------------------------------------------------------
 # FORWARD PASS
@@ -76,9 +75,8 @@ resulting_activations = resulting_activations_tensor.numpy().astype(np.single)
 
 start = time.time()
 
-expected_voltages, expected_activations = python_forward_pass(input_weights, recurrent_weights,
-                                                              time_series_data,
-                                                              decay_factor, threshold_voltage)
+expected_voltages, expected_activations = python_forward_pass(input_weights, recurrent_weights, membrane_decay_factors,
+                                                              time_series_data, threshold_voltage)
 
 python_forward_duration = time.time() - start
 
@@ -97,9 +95,12 @@ partial_dE_dv = np.dot(dE_dy, partial_dy_dv).astype(np.single)
 partial_dE_dv_tensor = tf.convert_to_tensor(partial_dE_dv, dtype=float)
 
 start = time.time()
-expected_dE_dW_in, expected_dE_dW_rec = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
-                                                             partial_dE_dv, recurrent_weights,
-                                                             threshold_voltage, decay_factor, gradient_scaling_factor)
+(expected_dE_dW_in,
+    expected_dE_dW_rec,
+    expected_dE_dalpha) = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
+                                               partial_dE_dv, recurrent_weights, membrane_decay_factors,
+                                               threshold_voltage, gradient_scaling_factor)
+
 python_backward_duration = time.time() - start
 
 start = time.time()

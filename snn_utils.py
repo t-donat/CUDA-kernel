@@ -74,13 +74,23 @@ def save_to_pickle_files(network_hyperparameters,
 
 
 def initialize_weights(num_neurons, num_input_channels, num_output_channels):
+    # normalized Xavier initializtion
+    input_weights_limit = np.sqrt(6) / np.sqrt(num_neurons + num_input_channels)
+    input_weights = np.random.uniform(-input_weights_limit, input_weights_limit, size=(num_neurons, num_input_channels))
 
-    input_weights = np.random.randn(num_neurons, num_input_channels).astype(np.single) * 0.1
-
-    recurrent_weights = np.random.randn(num_neurons, num_neurons).astype(np.single) * 0.1
+    recurrent_weights_limit = np.sqrt(6) / np.sqrt(num_neurons + num_neurons)
+    recurrent_weights = np.random.uniform(-recurrent_weights_limit, recurrent_weights_limit,
+                                          size=(num_neurons, num_neurons))
     np.fill_diagonal(recurrent_weights, 0.0)
 
-    output_weights = np.ones((num_output_channels, num_neurons)).astype(np.single)
+    output_weights_limit = np.sqrt(6) / np.sqrt(num_output_channels + num_neurons)
+    output_weights = np.random.uniform(-output_weights_limit, output_weights_limit,
+                                       size=(num_output_channels, num_neurons))
+
+    # input_weights = np.random.randn(num_neurons, num_input_channels).astype(np.single) * 0.1
+    # recurrent_weights = np.random.randn(num_neurons, num_neurons).astype(np.single) * 0.1
+    # np.fill_diagonal(recurrent_weights, 0.0)
+    # output_weights = np.random.randn(num_output_channels, num_neurons).astype(np.single)
 
     return input_weights, recurrent_weights, output_weights
 
@@ -104,9 +114,8 @@ def convert_to_tensors(input_weights, recurrent_weights, output_weights, time_se
     return input_weights_tensor, recurrent_weights_tensor, output_weights_tensor, time_series_data_tensor
 
 
-def python_forward_pass(input_weights, recurrent_weights,
-                        time_series_data,
-                        decay_factor, threshold_voltage):
+def python_forward_pass(input_weights, recurrent_weights, membrane_decay_factors,
+                        time_series_data, threshold_voltage):
 
     num_time_steps, num_batches, num_input_channels = time_series_data.shape
     num_neurons, _ = recurrent_weights.shape
@@ -119,9 +128,7 @@ def python_forward_pass(input_weights, recurrent_weights,
     base_activity = np.dot(time_series_data, input_weights.T)
 
     for t in range(num_time_steps):
-        current_input = base_activity[t]
-
-        v = decay_factor * v + current_input + np.dot(z, recurrent_weights.T) - threshold_voltage * z
+        v = membrane_decay_factors.T * v + base_activity[t] + np.dot(z, recurrent_weights.T) - threshold_voltage * z
         z[v >= threshold_voltage] = 1.0
         z[v < threshold_voltage] = 0.0
 
@@ -139,12 +146,74 @@ def MSE(expected_output, network_output):
     return np.sum(difference, axis=0) / num_time_steps
 
 
-def spike_gradient(membrane_voltages, threshold_voltage, dampening_factor):
+def spike_gradient(membrane_voltages, threshold_voltage, dampening_factor=0.3):
 
     return dampening_factor * np.maximum(1 - np.abs(membrane_voltages - threshold_voltage) / threshold_voltage, 0.0)
 
 
 def python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
+                         partial_dE_dv,
+                         recurrent_weights, membrane_decay_factors,
+                         threshold_voltage, dampening_factor=0.3):
+    num_time_steps, num_batches, num_input_channels = time_series_data.shape
+    *_, num_neurons = resulting_voltages.shape
+
+    previous_total_dE_dv = np.zeros((num_batches, num_neurons))
+    sum_over_k = np.zeros((num_batches, num_neurons))
+
+    dE_dW_in = np.zeros((num_neurons, num_input_channels))
+    dE_dW_rec = np.zeros((num_neurons, num_neurons))
+    dE_dalpha = np.zeros((num_neurons, 1))
+
+    # all_total_dE_dv = np.zeros((num_time_steps, num_batches, num_neurons))
+
+    for time_step in reversed(range(num_time_steps)):
+        current_membrane_voltages = resulting_voltages[time_step]
+        spike_gradient_approximate = spike_gradient(current_membrane_voltages, threshold_voltage,
+                                                    dampening_factor=dampening_factor)
+
+        for batch in range(num_batches):
+            batchwise_spike_gradients = spike_gradient_approximate[batch]
+            batchwise_dv_k_dv_j = batchwise_spike_gradients.reshape(1, -1) * recurrent_weights + np.diag(
+                membrane_decay_factors[:, 0] - threshold_voltage * batchwise_spike_gradients)
+
+            batchwise_previous_total_dE_dv = previous_total_dE_dv[batch].reshape(1, -1)
+            sum_over_k[batch] = np.dot(batchwise_previous_total_dE_dv, batchwise_dv_k_dv_j)
+
+        current_partial_dE_dv = partial_dE_dv[time_step]
+        current_total_dE_dv = current_partial_dE_dv + sum_over_k
+
+        # all_total_dE_dv[time_step] = current_total_dE_dv
+
+        dE_dW_in_component = np.dot(current_total_dE_dv.T, time_series_data[time_step])
+        dE_dW_rec_component = np.dot(current_total_dE_dv.T, resulting_activations[time_step])
+
+        # try except block to catch numerical under- & overflows
+        try:
+            if time_step > 0:
+                previous_membrane_voltages = resulting_voltages[time_step - 1]
+                dE_dalpha_component = np.sum(current_total_dE_dv * previous_membrane_voltages, axis=0, keepdims=True)
+            else:
+                dE_dalpha_component = np.zeros((1, num_neurons))
+
+        except:
+            print(epoch)
+            print(current_total_dE_dv)
+            print(previous_membrane_voltages)
+            print(dE_dalpha_component)
+
+            raise ValueError("hi")
+
+        dE_dW_in += dE_dW_in_component
+        dE_dW_rec += dE_dW_rec_component
+        dE_dalpha += dE_dalpha_component.T
+
+        previous_total_dE_dv = current_total_dE_dv
+
+    return dE_dW_in, dE_dW_rec, dE_dalpha
+
+
+def old_python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
                          partial_dE_dv,
                          recurrent_weights,
                          threshold_voltage, decay_factor, dampening_factor):
