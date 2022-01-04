@@ -3,7 +3,6 @@
 #include "tensorflow/core/util/gpu_kernel_helper.h"
 #include <unsupported/Eigen/CXX11/Tensor>
 
-
 #include "spiking_network.h"
 
 #include "cuda_runtime.h"
@@ -11,340 +10,56 @@
 
 #include "cublas_v2.h"
 
+#include "general_kernel_definitions.cu"
+#include "forward_pass_kernel_definitions.cu"
+#include "backward_pass_kernel_definitions.cu"
+
 using namespace tensorflow;
 
 using GPUDevice = Eigen::GpuDevice;
-
-
-__device__ void warpReduce(volatile float *shared_data, int tID, int blockSize) {
-    if (blockSize >= 64) { shared_data[tID] += shared_data[tID + 32]; }
-    if (blockSize >= 32) { shared_data[tID] += shared_data[tID + 16]; }
-    if (blockSize >= 16) { shared_data[tID] += shared_data[tID + 8]; }
-    if (blockSize >= 8) { shared_data[tID] += shared_data[tID + 4]; }
-    if (blockSize >= 4) { shared_data[tID] += shared_data[tID + 2]; }
-    if (blockSize >= 2) { shared_data[tID] += shared_data[tID + 1]; }
-}
-
-__global__ void FloatMatMulKernel(const int N, const int K, const int M, const float *W, const float *X, float *Z) {
-    extern __shared__ float shared_data[];
-
-
-    int tID = threadIdx.x;
-    int weightsID =  blockIdx.x * K + tID;
-    int dataID = M * tID + blockIdx.y;
-
-    int outputID_x = blockIdx.x;
-    int outputID_y = blockIdx.y;
-
-    /* SegFault guards:
-     * dataID: K*M long, access element i and i + K*M/2
-     * guard: K*M - K*M/2 = K*M/2
-     *
-     *  weightsID: N*K long, access element j and j+K/2
-     *  guard: N*K - K/2
-     */
-    if ((dataID < K * M/2) && (weightsID < (N * K - K/2))) {
-        shared_data[tID] = W[weightsID] * X[dataID] + W[weightsID + int(K/2)] * X[dataID + int(M*K/2)];
-    }
-
-    __syncthreads();
-
-    if (blockDim.x >= 1024) { if (tID < 512) { shared_data[tID] += shared_data[tID + 512]; } __syncthreads(); }
-    if (blockDim.x >= 512) { if (tID < 256) { shared_data[tID] += shared_data[tID + 256]; } __syncthreads(); }
-    if (blockDim.x >= 256) { if (tID < 128) { shared_data[tID] += shared_data[tID + 128]; } __syncthreads(); }
-    if (blockDim.x >= 128) { if (tID < 64) { shared_data[tID] += shared_data[tID + 64]; } __syncthreads(); }
-
-    if (tID < 32) { warpReduce(shared_data, tID, blockDim.x); }
-
-    if (tID == 0) {
-
-        Z[M * outputID_x + outputID_y] = shared_data[0];
-    }
-
-}
-
-__global__ void NeuronActivationUpdateRule(float* neuron_activations,
-                                           const float* membrane_voltages, const float v_th,
-                                           const int num_batches, const int num_neurons) {
-    // batch index
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
-    // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
-
-    if (tID < num_batches * num_neurons) {
-        if (membrane_voltages[tID] < v_th) {
-            neuron_activations[tID] = 0.0f;
-        }
-        else {
-            neuron_activations[tID] = 1.0f;
-        }
-    }
-}
-
-
-__global__ void MembraneVoltageUpdateRule(float* intermediate_membrane_voltages,
-                                          const float* neuron_activations, const float* base_activity, const float v_th,
-                                          const int num_batches, const int num_neurons) {
-    // batch index
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
-    // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
-
-    if (tID < num_batches * num_neurons) {
-        intermediate_membrane_voltages[tID] += base_activity[tID] - v_th * neuron_activations[tID];
-    }
-}
-
-__global__ void SetToValue(float* input_matrix,
-                           const float set_value,
-                           const int num_batches, const int num_neurons) {
-    // batch index
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
-    // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
-
-    if (tID < num_batches * num_neurons) {
-        input_matrix[tID] = set_value;
-    }
-}
-
-__global__ void CopyFromInput(float* output_matrix,
-                              const float* input_tensor, const int time_step,
-                              const int num_batches, const int num_neurons) {
-    // batch index
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
-    // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
-
-    if (tID < num_batches * num_neurons) {
-        output_matrix[tID] = input_tensor[num_batches * num_neurons * time_step + tID];
-    }
-}
-
-
-__global__ void CopyToOutput(float *result_tensor,
-                             const float* input_matrix, const int time_step,
-                             const int num_batches, const int num_neurons) {
-
-    // batch index
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
-    // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
-
-    if (tID < num_batches * num_neurons) {
-        result_tensor[num_batches * num_neurons * time_step + tID] = input_matrix[tID];
-    }
-}
-
-__global__ void ApproximateSpikeGradient(float* spike_gradient_approximation,
-                                         const float* current_membrane_voltages,
-                                         const float threshold_voltage, const float gradient_scaling_factor,
-                                         const float num_batches, const float num_neurons) {
-
-    // batch index
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
-    // neuron index
-    int n = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread specific ID
-    int tID = b * num_neurons + n;
-
-    if (tID < num_batches * num_neurons) {
-        spike_gradient_approximation[tID] = gradient_scaling_factor *
-                fmaxf(0.0f, 1 - fabsf(current_membrane_voltages[tID] - threshold_voltage) / threshold_voltage);
-    }
-}
-
-__global__ void CalculateTotalGradient(float* current_total_dE_dv,
-                                       const float* current_partial_dE_dv, const float* previous_total_dE_dv,
-                                       const float* current_spike_gradient, const float* recurrent_weights,
-                                       const float decay_factor, const float threshold_voltage,
-                                       const int num_batches, const int num_neurons) {
-
-    const int b = blockIdx.x * blockDim.x + threadIdx.x;
-    const int j = blockIdx.y * blockDim.y + threadIdx.y;
-    const int tID = b * num_neurons + j;
-
-    if (tID < num_batches * num_neurons) {
-
-        float dE_dv_k, dv_k_dv_j;
-
-        float result = current_partial_dE_dv[tID];
-
-        for (int k = 0; k < num_neurons; ++k) {
-
-            dE_dv_k = previous_total_dE_dv[b * num_neurons + k];
-
-            if (k == j) {
-                dv_k_dv_j = decay_factor + (recurrent_weights[k * num_neurons + j] - threshold_voltage) * current_spike_gradient[tID];
-            }
-
-            else {
-                dv_k_dv_j = recurrent_weights[k * num_neurons + j] * current_spike_gradient[tID];
-            }
-
-            result += dE_dv_k * dv_k_dv_j;
-        }
-
-        current_total_dE_dv[tID] = result;
-    }
-}
-
-/*
-__global__ void CalculateVoltageGradient(float* dv_k_dv_j,
-                                         const float* spike_gradient_approximation, const float* recurrent_weights,
-                                         const float decay_factor, const float threshold_voltage,
-                                         const int num_batches, const int num_neurons) {
-
-    const int batch_ID = blockIdx.x;
-    const int k = blockIdx.y * blockDim.y + threadIdx.y;
-    const int j = blockIdx.z * blockDim.z + threadIdx.z;
-
-    const int tID = batch_ID * num_neurons * num_neurons + k * num_neurons + j;
-
-    if (tID < num_batches * num_neurons * num_neurons) {
-
-        if (k == j) {
-            // possible restucture: load W_rec at k, j into shared memory across batches,
-            // this would result in only one load from global memory and num_batches loads from shared memory
-            dv_k_dv_j[tID] = decay_factor + (recurrent_weights[k * num_neurons + j] - threshold_voltage) *
-                    spike_gradient_approximation[batch_ID * num_neurons + j];
-        }
-        else {
-            dv_k_dv_j[tID] = recurrent_weights[k * num_neurons + j] *
-                    spike_gradient_approximation[batch_ID * num_neurons + j];
-        }
-    }
-}
-
- __global__ void CalculateTotalGradient(float* resulting_total_dE_dv,
-                                       const float* current_partial_dE_dv, const float* current_sum_over_k,
-                                       const int num_batches, const int num_neurons) {
-
-    // batch index
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
-    // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
-
-    if (tID < num_batches * num_neurons) {
-
-        resulting_total_dE_dv[tID] = current_partial_dE_dv[tID] + current_sum_over_k[tID];
-    }
-
-}
-*/
-__global__ void SumUpComponent(float* output_matrix,
-                               const float* component,
-                               const int size_first_dim, const int size_second_dim) {
-
-    const int first_dim_id = blockIdx.x * blockDim.x + threadIdx.x;
-    const int second_dim_id = blockIdx.y * blockDim.y + threadIdx.y;
-    // thread ID index used to access data from array
-    const int tID = first_dim_id * size_second_dim + second_dim_id;
-
-    if (tID < size_first_dim * size_second_dim) {
-
-        output_matrix[tID] += component[tID];
-    }
-}
-
-/*
-__global__ void CheckIfNanInput(bool *is_it_nan,
-                                const float* data,
-                                const int time_step, const int first_dim_size, const int second_dim_size) {
-
-    const int first_dim_ID = blockIdx.x * blockDim.x + threadIdx.x;
-    const int second_dim_ID = blockIdx.y * blockDim.y + threadIdx.y;
-    const int tID = first_dim_ID * second_dim_size + second_dim_ID;
-
-    if (tID < first_dim_size * second_dim_size) {
-        if (isnan(data[tID])) {
-            *is_it_nan = true;
-        }
-
-        __syncthreads();
-
-        if ((*is_it_nan) & (tID == 0)) {
-            printf("Timestep %d: Input weights are nan\n", time_step);
-            *is_it_nan = false;
-        }
-    }
-
-}
-
-__global__ void CheckIfNanRecurrent(bool *is_it_nan,
-                                    const float* data,
-                                    const int time_step, const int first_dim_size, const int second_dim_size) {
-
-    const int first_dim_ID = blockIdx.x * blockDim.x + threadIdx.x;
-    const int second_dim_ID = blockIdx.y * blockDim.y + threadIdx.y;
-    const int tID = first_dim_ID * second_dim_size + second_dim_ID;
-
-    if (tID < first_dim_size * second_dim_size) {
-        if (isnan(data[tID])) {
-            *is_it_nan = true;
-        }
-
-        __syncthreads();
-
-        if ((*is_it_nan) & (tID == 0)) {
-            printf("Timestep %d: Recurrent weights are nan\n", time_step);
-            *is_it_nan = false;
-        }
-    }
-
-}
-
-*/
 
 ForwardPass::ForwardPass(cublasHandle_t cublas_handle,
                          int num_batches,
                          int num_neurons,
                          int num_input_channels,
                          int num_time_steps,
-                         float decay_factor,
-                         float threshold_voltage) :
+                         float threshold_voltage,
+                         float delta_t) :
                             cublas_handle(cublas_handle),
                             num_batches(num_batches),
                             num_neurons(num_neurons),
                             num_input_channels(num_input_channels),
                             num_time_steps(num_time_steps),
-                            decay_factor(decay_factor),
-                            threshold_voltage(threshold_voltage)
+                            threshold_voltage(threshold_voltage),
+                            delta_t(delta_t)
                          { };
 
 void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
-                             const float *W_in, const float *W_rec,
+                             const float *W_in, const float *W_rec, const float *membrane_time_constants,
                              const float *time_series_data, float *base_activity,
-                             float *current_membrane_voltages, float *current_neuron_activations, float *current_base_activity,
+                             float* membrane_decay_factors,
+                             float *current_membrane_voltages, float *current_neuron_activations,
+                             float *current_input_component, float *current_neuron_component,
                              float *resulting_voltages, float *resulting_activations)
 {
     static float alpha = 1.0f;
     static float beta = 0.0f;
     //static cudaError_t exit_status;
 
-
-
     // ceiling division of the threads into the number of needed blocks
     int maximum_threads_per_block = 1024; // hard limit set by hardware
     int max_threads_per_dimension_of_block = 32; // sqrt of maximum_threads_per_block
 
     // ceiling division by max_threads_per_dimension_of_block
-    int num_neuron_blocks = (num_neurons + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
-    int num_batch_blocks = (num_batches + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
+    // (x + y - 1) / y = 1 + (x - 1) / y
+    // avoids overflows from x + y
+    const int num_neuron_blocks = 1 + (num_neurons - 1) / max_threads_per_dimension_of_block;
+    const int num_batch_blocks = 1 + (num_batches - 1) / max_threads_per_dimension_of_block;
+    const int num_membrane_decay_blocks = 1 + (num_neurons - 1) / maximum_threads_per_block;
 
     dim3 kernelGridSize(num_batch_blocks, num_neuron_blocks, 1);
+    dim3 membraneTimeConstantGridSize(num_membrane_decay_blocks, 1, 1);
+
     dim3 kernelBlockSize(max_threads_per_dimension_of_block, max_threads_per_dimension_of_block, 1);
 
     // set values of v and z to guarentee that they are initialized to 0
@@ -353,6 +68,10 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
 
     SetToValue<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_neuron_activations, 0.0f,
                                                                         num_batches, num_neurons);
+
+    CalculateMembraneDecayFactors<<<membraneTimeConstantGridSize, kernelBlockSize, 0, device.stream()>>>(membrane_decay_factors,
+                                                                                                membrane_time_constants,
+                                                                                                delta_t, num_neurons);
 
     cublasSetStream_v2(cublas_handle, device.stream());
 
@@ -376,7 +95,7 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     // iterate though the time series
     for (int t = 0; t < num_time_steps; t++) {
 
-        CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_base_activity,
+        CopyFromInput<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_input_component,
                                                                                base_activity, t,
                                                                                num_batches, num_neurons);
 
@@ -386,11 +105,12 @@ void ForwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                        &alpha,
                        W_rec, num_neurons,
                        current_neuron_activations, num_neurons,
-                       &decay_factor,
-                       current_membrane_voltages, num_neurons);
+                       &beta,
+                       current_neuron_component, num_neurons);
 
         MembraneVoltageUpdateRule<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
-                                                                                           current_neuron_activations, current_base_activity, threshold_voltage,
+                                                                                           current_input_component, current_neuron_component,
+                                                                                           membrane_decay_factors,
                                                                                            num_batches, num_neurons);
 
         NeuronActivationUpdateRule<<<kernelGridSize, kernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
@@ -414,26 +134,30 @@ BackwardPass::BackwardPass(cublasHandle_t cublas_handle,
                            int num_neurons,
                            int num_input_channels,
                            int num_time_steps,
-                           float decay_factor,
                            float threshold_voltage,
+                           float delta_t,
                            float gradient_scaling_factor) :
                               cublas_handle(cublas_handle),
                               num_batches(num_batches),
                               num_neurons(num_neurons),
                               num_input_channels(num_input_channels),
                               num_time_steps(num_time_steps),
-                              decay_factor(decay_factor),
                               threshold_voltage(threshold_voltage),
+                              delta_t(delta_t),
                               gradient_scaling_factor(gradient_scaling_factor)
                            { };
 
 void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
-                              float* dE_dW_in, float* dE_dW_rec,
+                              float* dE_dW_in, float* dE_dW_rec, float* dE_dmembrane_time_constants,
+                              float* dE_dmembrane_decay_factors,
                               float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations,
+                              float* next_membrane_voltages,
                               float* current_spike_gradient, float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
                               float* dE_dW_in_component, float* dE_dW_rec_component,
+                              float* membrane_decay_factors,
                               const float* time_series_data, const float* resulting_voltages, const float* resulting_activations,
-                              const float* partial_dE_dv, const float* W_rec) {
+                              const float* partial_dE_dv,
+                              const float* W_rec, const float* membrane_time_constants) {
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
@@ -445,14 +169,18 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     const int max_threads_per_dimension_of_block = 32; // sqrt of maximum_threads_per_block
 
     // ceiling division by max_threads_per_dimension_of_block
-    const int num_neuron_blocks = (num_neurons + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
-    const int num_batch_blocks = (num_batches + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
-    const int num_input_blocks = (num_input_channels + max_threads_per_dimension_of_block - 1) / max_threads_per_dimension_of_block;
+    // (x + y - 1) / y = 1 + (x - 1) / y
+    // avoids overflows from x + y
+    const int num_neuron_blocks = 1 + (num_neurons - 1) / max_threads_per_dimension_of_block;
+    const int num_batch_blocks = 1 + (num_batches - 1) / max_threads_per_dimension_of_block;
+    const int num_input_blocks = 1 + (num_input_channels - 1) / max_threads_per_dimension_of_block;
+    const int num_membrane_decay_blocks = 1 + (num_neurons - 1) / maximum_threads_per_block;
 
     dim3 regularKernelGridSize(num_batch_blocks, num_neuron_blocks, 1);
     dim3 inputDataGridSize(num_batch_blocks, num_input_blocks, 1);
-    dim3 inputWeightsGridSize = dim3(num_neuron_blocks, num_input_blocks, 1);
-    dim3 recurrentWeightsGridSize = dim3(num_neuron_blocks, num_neuron_blocks, 1);
+    dim3 inputWeightsGridSize(num_neuron_blocks, num_input_blocks, 1);
+    dim3 recurrentWeightsGridSize(num_neuron_blocks, num_neuron_blocks, 1);
+    dim3 membraneTimeConstantGridSize(num_membrane_decay_blocks, 1, 1);
     //dim3 voltageGradientGridSize(num_batches, num_neuron_blocks, num_neuron_blocks);
 
     dim3 regularKernelBlockSize(max_threads_per_dimension_of_block, max_threads_per_dimension_of_block, 1);
@@ -466,15 +194,29 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                          0.0,
                                                                                          num_neurons, num_neurons);
 
-
+    CalculateMembraneDecayFactors<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(membrane_decay_factors,
+                                                                                                       membrane_time_constants,
+                                                                                                       delta_t, num_neurons);
+    /*
+    SetDecayFactorDerivativeToZero<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dalpha,
+                                                                                                        num_neurons);
+    */
 
     // First time step t = num_time_steps - 1
     CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
                                                                                          time_series_data, num_time_steps - 1,
                                                                                          num_batches, num_input_channels);
 
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
+                                                                                         resulting_voltages, num_time_steps - 1,
+                                                                                         num_batches, num_input_channels);
+
     CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
                                                                                          resulting_activations, num_time_steps - 1,
+                                                                                         num_batches, num_neurons);
+
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_membrane_voltages,
+                                                                                         resulting_activations, num_time_steps - 2,
                                                                                          num_batches, num_neurons);
 
     // At the last time step (t=num_timesteps - 1), the partial gradient is equal to the total gradient
@@ -512,9 +254,19 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     SumUpComponent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
                                                                                              dE_dW_rec_component,
                                                                                              num_neurons, num_neurons);
+    /*
+    // MEMBRANE TIME CONSTANTS
+    CalculateDecayFactorDerivative<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_decay_factors,
+                                                                                                        current_total_dE_dv, next_membrane_voltages,
+                                                                                                        num_batches, num_neurons);
+    */
 
     /*
     // FOR TESTING
+    CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(total_gradients,
+                                                                                        current_total_dE_dv, num_time_steps - 1,
+                                                                                        num_batches, num_neurons);
+
     CopyToOutput<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(input_gradients,
                                                                                        dE_dW_in_component, num_time_steps - 1,
                                                                                        num_neurons, num_input_channels);
@@ -524,10 +276,10 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                            num_neurons, num_neurons);
 
     // FOR TESTING
-    */
 
+    */
     // Remaining time steps
-    for (int t = num_time_steps - 2; t >= 0; --t) {
+    for (int t = num_time_steps - 2; t >= 1; --t) {
 
         // Select data
         CopyFromInput<<<inputDataGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
@@ -536,6 +288,16 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
 
         CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
                                                                                              resulting_voltages, t,
+                                                                                             num_batches, num_neurons);
+
+        /*
+        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
+                                                                                             next_membrane_voltages, 0,
+                                                                                             num_batches, num_neurons);
+        */
+
+        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_membrane_voltages,
+                                                                                             resulting_voltages, t-1,
                                                                                              num_batches, num_neurons);
 
         CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
@@ -558,8 +320,9 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
 
         CalculateTotalGradient<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_total_dE_dv,
                                                                                                       current_partial_dE_dv, previous_total_dE_dv,
-                                                                                                      current_spike_gradient, W_rec,
-                                                                                                      decay_factor, threshold_voltage,
+                                                                                                      current_spike_gradient,
+                                                                                                      W_rec, membrane_decay_factors,
+                                                                                                      threshold_voltage,
                                                                                                       num_batches, num_neurons);
 
         /*
@@ -622,7 +385,19 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                                  num_neurons, num_neurons);
 
         /*
+        // MEMBRANE DECAY FACTORS
+        CalculateDecayFactorDerivative<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_decay_factors,
+                                                                                                            current_total_dE_dv, current_membrane_voltages,
+                                                                                                            num_batches, num_neurons);
+        */
+
+        /*
+
         // FOR TESTING
+        CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(total_gradients,
+                                                                                            current_total_dE_dv, t,
+                                                                                            num_batches, num_neurons);
+
         CopyToOutput<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(input_gradients,
                                                                                            dE_dW_in_component, t,
                                                                                            num_neurons, num_input_channels);
@@ -634,5 +409,74 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
         // FOR TESTING
         */
     }
+
+    // Last BPTT time step,
+    // Select data
+    CopyFromInput<<<inputDataGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
+                                                                                         time_series_data, 0,
+                                                                                         num_batches, num_input_channels);
+
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
+                                                                                             resulting_voltages, 0,
+                                                                                             num_batches, num_neurons);
+
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
+                                                                                             resulting_activations, 0,
+                                                                                             num_batches, num_neurons);
+
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_partial_dE_dv,
+                                                                                             partial_dE_dv, 0,
+                                                                                             num_batches, num_neurons);
+
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(previous_total_dE_dv,
+                                                                                             current_total_dE_dv, 0,
+                                                                                             num_batches, num_neurons);
+
+    // Calculate total derivative of loss function wrt the membrane voltages for this time step
+    ApproximateSpikeGradient<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_spike_gradient,
+                                                                                                        current_membrane_voltages,
+                                                                                                        threshold_voltage, gradient_scaling_factor,
+                                                                                                        num_batches, num_neurons);
+
+    CalculateTotalGradient<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_total_dE_dv,
+                                                                                                      current_partial_dE_dv, previous_total_dE_dv,
+                                                                                                      current_spike_gradient,
+                                                                                                      W_rec, membrane_decay_factors,
+                                                                                                      threshold_voltage,
+                                                                                                      num_batches, num_neurons);
+
+
+
+    // use the total derivative to calculate the derivative wrt the different weights
+
+    // INPUT WEIGHTS
+
+    cublasSgemm_v2(cublas_handle,
+                       CUBLAS_OP_N, CUBLAS_OP_T,
+                       num_input_channels, num_neurons, num_batches,
+                       &alpha,
+                       current_input_data, num_input_channels,
+                       current_total_dE_dv, num_neurons,
+                       &beta,
+                       dE_dW_in_component, num_input_channels);
+
+    SumUpComponent<<<inputWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_in,
+                                                                                             dE_dW_in_component,
+                                                                                             num_neurons, num_input_channels);
+    // RECURRENT WEIGHTS
+
+    cublasSgemm_v2(cublas_handle,
+                   CUBLAS_OP_N, CUBLAS_OP_T,
+                   num_neurons, num_neurons, num_batches,
+                   &alpha,
+                   current_neuron_activations, num_neurons,
+                   current_total_dE_dv, num_neurons,
+                   &beta,
+                   dE_dW_rec_component, num_neurons);
+
+    SumUpComponent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
+                                                                                                 dE_dW_rec_component,
+                                                                                                 num_neurons, num_neurons);
+
 }
 #endif // GOOGLE_CUDA
