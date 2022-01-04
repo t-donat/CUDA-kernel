@@ -8,7 +8,8 @@ import os
 from snn_utils import initialize_weights, initialize_data, convert_to_tensors
 from snn_utils import python_forward_pass, MSE, python_backward_pass
 from snn_utils import verify_forward_pass, verify_backward_pass
-from snn_utils import print_voltage_discrepancies, print_input_weight_discrepancies, print_recurrent_weight_discrepancies
+from snn_utils import print_voltage_discrepancies, print_input_weight_discrepancies
+from snn_utils import print_weight_discrepancies#, print_membrane_decay_weight_discepancies
 from snn_utils import save_to_pickle_files
 
 # -------------------------------------------------------------------
@@ -16,21 +17,26 @@ from snn_utils import save_to_pickle_files
 # -------------------------------------------------------------------
 
 verbose = True
-save_data = False
+save_data = True
+debug_mode = True
 
 # -------------------------------------------------------------------
 # HYPERPARAMETERS
 # -------------------------------------------------------------------
 
+start_value = 0
+end_value = 2 * np.pi
+num_time_steps = 100
 
-num_time_steps = 1000
-num_batches = 4
-num_neurons = 128
+dt = (end_value - start_value)/num_time_steps
+initial_membrane_time_constant = 0.02  # 20 ms
 
-num_input_channels = 2  # currently only supports 2
+num_batches = 1
+num_neurons = 8
+num_input_channels = 2  # data initialization currently only supports 2 channels
 num_output_channels = 1
 
-decay_factor = 0.95
+decay_factor = np.exp(-dt/initial_membrane_time_constant)
 threshold_voltage = 0.5
 gradient_scaling_factor = 0.3
 
@@ -39,19 +45,22 @@ gradient_scaling_factor = 0.3
 # -------------------------------------------------------------------
 
 
-input_weights, recurrent_weights, output_weights = initialize_weights(num_neurons,
-                                                                      num_input_channels,
-                                                                      num_output_channels)
+(input_weights, recurrent_weights,
+ output_weights, membrane_decay_factors) = initialize_weights(num_neurons, num_input_channels, num_output_channels,
+                                                              threshold_voltage, dt, initial_membrane_time_constant)
 
-time_series_data = initialize_data(num_time_steps,
-                                   num_batches,
-                                   num_input_channels)
+membrane_time_constants = np.ones((num_neurons, 1)) * initial_membrane_time_constant
+membrane_time_constants_tensor = tf.convert_to_tensor(membrane_time_constants, dtype=float)
+
+
+time_series_data = initialize_data(num_time_steps, num_batches, num_input_channels,
+                                   start_value, end_value)
 
 (input_weights_tensor, recurrent_weights_tensor,
-    output_weights_tensor, time_series_data_tensor) = convert_to_tensors(input_weights, recurrent_weights,
-                                                                         output_weights,  time_series_data)
+ output_weights_tensor, time_series_data_tensor,
+ membrane_decay_factors_tensor) = convert_to_tensors(input_weights, recurrent_weights, output_weights,
+                                                     time_series_data, membrane_decay_factors)
 
-membrane_decay_factors = np.ones((num_neurons, 1))
 
 # -------------------------------------------------------------------
 # FORWARD PASS
@@ -60,11 +69,14 @@ membrane_decay_factors = np.ones((num_neurons, 1))
 spiking_module = tf.load_op_library("./spiking_network.so")
 
 start = time.time()
-resulting_voltages_tensor, resulting_activations_tensor = spiking_module.forward_pass(input_weights_tensor,
-                                                                                      recurrent_weights_tensor,
-                                                                                      time_series_data_tensor,
-                                                                                      decay_factor=decay_factor,
-                                                                                      threshold_voltage=threshold_voltage)
+(resulting_voltages_tensor,
+ resulting_activations_tensor) = spiking_module.forward_pass(input_weights_tensor,
+                                                             recurrent_weights_tensor,
+                                                             membrane_time_constants_tensor,
+                                                             time_series_data_tensor,
+                                                             threshold_voltage=threshold_voltage,
+                                                             delta_t=dt,
+                                                             debug_mode=debug_mode)
 
 cuda_forward_duration = time.time() - start
 
@@ -75,8 +87,8 @@ resulting_activations = resulting_activations_tensor.numpy().astype(np.single)
 
 start = time.time()
 
-expected_voltages, expected_activations = python_forward_pass(input_weights, recurrent_weights, membrane_decay_factors,
-                                                              time_series_data, threshold_voltage)
+expected_voltages, expected_activations = python_forward_pass(input_weights, recurrent_weights, membrane_time_constants,
+                                                              time_series_data, threshold_voltage, dt)
 
 python_forward_duration = time.time() - start
 
@@ -98,25 +110,36 @@ start = time.time()
 (expected_dE_dW_in,
     expected_dE_dW_rec,
     expected_dE_dalpha) = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
-                                               partial_dE_dv, recurrent_weights, membrane_decay_factors,
-                                               threshold_voltage, gradient_scaling_factor)
+                                               partial_dE_dv,
+                                               recurrent_weights, membrane_time_constants,
+                                               threshold_voltage, dt, dampening_factor=gradient_scaling_factor)
 
 python_backward_duration = time.time() - start
 
 start = time.time()
-resulting_dE_dW_in_tensor, resulting_dE_dW_rec_tensor = spiking_module.backward_pass(partial_dE_dv_tensor,
-                                                                                     recurrent_weights_tensor,
-                                                                                     time_series_data_tensor,
-                                                                                     resulting_voltages_tensor,
-                                                                                     resulting_activations_tensor,
-                                                                                     decay_factor=decay_factor,
-                                                                                     threshold_voltage=threshold_voltage,
-                                                                                     gradient_scaling_factor=gradient_scaling_factor)
+
+(resulting_dE_dW_in_tensor,
+ resulting_dE_dW_rec_tensor,
+ resulting_dE_dmembrane_time_constants) = spiking_module.backward_pass(partial_dE_dv_tensor,
+                                                                       recurrent_weights_tensor,
+                                                                       membrane_time_constants_tensor,
+                                                                       time_series_data_tensor,
+                                                                       resulting_voltages_tensor,
+                                                                       resulting_activations_tensor,
+                                                                       threshold_voltage=threshold_voltage,
+                                                                       delta_t=dt,
+                                                                       gradient_scaling_factor=gradient_scaling_factor,
+                                                                       debug_mode=debug_mode)
 
 cuda_backward_duration = time.time() - start
 
+# resulting_dE_dW_in = expected_dE_dW_in
+# resulting_dE_dW_rec = expected_dE_dW_rec
+resulting_dE_dalpha = expected_dE_dalpha
+
 resulting_dE_dW_in = resulting_dE_dW_in_tensor.numpy()
 resulting_dE_dW_rec = resulting_dE_dW_rec_tensor.numpy()
+#resulting_dE_dalpha = resulting_dE_dalpha_tensor.numpy()
 
 # -------------------------------------------------------------------
 # VALIDATING THE RESULTS
@@ -124,14 +147,14 @@ resulting_dE_dW_rec = resulting_dE_dW_rec_tensor.numpy()
 
 (cuda_voltages_ok, cuda_activations_ok,
  python_voltages_ok, python_activations_ok,
- voltages_match, activations_match) = verify_forward_pass(expected_voltages,
-                                                          expected_activations,
-                                                          resulting_voltages,
-                                                          resulting_activations)
+ voltages_match, activations_match) = verify_forward_pass(expected_voltages, expected_activations,
+                                                          resulting_voltages, resulting_activations)
 
 
-input_weights_match, recurrent_weights_match = verify_backward_pass(expected_dE_dW_in, expected_dE_dW_rec,
-                                                                    resulting_dE_dW_in, resulting_dE_dW_rec)
+(input_weights_match,
+ recurrent_weights_match,
+ membrane_decay_weights_match) = verify_backward_pass(expected_dE_dW_in, expected_dE_dW_rec, expected_dE_dalpha,
+                                                      resulting_dE_dW_in, resulting_dE_dW_rec, resulting_dE_dalpha)
 if verbose:
     print("Forward Pass Results: ")
 
@@ -162,7 +185,7 @@ if verbose:
     print(f"Are all voltages close to equal between batches? {python_voltages_ok}")
     print(f"Are all activations close to equal between batches? {python_activations_ok}")
 
-    print("\n Comparing implementations:")
+    print("\nComparing implementations:")
     print(f"Do the membrane voltages match? {voltages_match}")
     print(f"Do the neuron activations match between Python and CUDA? {activations_match}")
 
@@ -172,12 +195,16 @@ if verbose:
     print("\nBackward Pass Results: ")
     print(f"Do the input weights match between Python and CUDA: {input_weights_match}")
     print(f"Do the recurrent weights match between Python and CUDA: {recurrent_weights_match}")
+    print(f"Do the membrane decay weights match between Python and CUDA: {membrane_decay_weights_match}")
 
     if not input_weights_match:
-        print_input_weight_discrepancies(expected_dE_dW_in, resulting_dE_dW_in)
+        print_weight_discrepancies("Input", expected_dE_dW_in, resulting_dE_dW_in)
 
     if not recurrent_weights_match:
-        print_recurrent_weight_discrepancies(expected_dE_dW_rec, resulting_dE_dW_rec)
+        print_weight_discrepancies("Recurrent", expected_dE_dW_rec, resulting_dE_dW_rec)
+
+    if not membrane_decay_weights_match:
+        print_weight_discrepancies("Membrane Decay", expected_dE_dalpha, resulting_dE_dalpha)
 
     print("\nRuntimes:")
     print("Forward Pass")
@@ -206,9 +233,31 @@ if save_data:
                                 threshold_voltage))
 
     save_to_pickle_files(hyperparameters,
-                         input_weights, recurrent_weights, output_weights,
-                         time_series_data,
-                         resulting_voltages, resulting_activations,
+                         input_weights, recurrent_weights, membrane_decay_factors, output_weights,
+                         time_series_data, resulting_voltages, resulting_activations,
+                         expected_dE_dW_in, expected_dE_dW_rec,
                          resulting_dE_dW_in, resulting_dE_dW_rec)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "expected_total_gradients.p"), "wb") as pickle_file:
+    #    pickle.dump(expected_total_gradients, pickle_file)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "expected_input_gradients.p"), "wb") as pickle_file:
+    #    pickle.dump(expected_input_gradients, pickle_file)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "expected_recurrent_gradients.p"), "wb") as pickle_file:
+    #    pickle.dump(expected_recurrent_gradients, pickle_file)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "resulting_total_gradients.p"), "wb") as pickle_file:
+    #    pickle.dump(resulting_total_gradients.numpy(), pickle_file)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "resulting_input_gradients.p"), "wb") as pickle_file:
+    #    pickle.dump(resulting_input_gradients.numpy(), pickle_file)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "resulting_recurrent_gradients.p"), "wb") as pickle_file:
+    #    pickle.dump(resulting_recurrent_gradients.numpy(), pickle_file)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "partial_gradients.p"), "wb") as pickle_file:
+    #    pickle.dump(partial_dE_dv, pickle_file)
+
 
 

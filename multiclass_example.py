@@ -131,7 +131,7 @@ for epoch in range(1, num_epochs + 1):
     membrane_time_constants -= learning_rate / num_time_steps * (dE_dmembrane_time_constants + regularization_lambda * membrane_time_constants)
 
     # Sanity checks
-    np.fill_diagonal(W_rec, 0.0)
+    np.fill_diagonal(W_rec, -threshold_voltage)
 
     if np.any(membrane_time_constants < 0.0):
         print("Time constant smaller than 0")

@@ -33,9 +33,10 @@ def read_pickle_files(file_directory="./data"):
 
 
 def save_to_pickle_files(network_hyperparameters,
-                         input_weights, recurrent_weights, output_weights,
+                         input_weights, recurrent_weights, membrane_decay_factors, output_weights,
                          time_series_data,
                          resulting_voltages, resulting_activations,
+                         expected_input_gradient, expected_recurrent_gradient,
                          resulting_input_gradient, resulting_recurrent_gradient,
                          file_directory="./data/pickled_data"):
 
@@ -51,6 +52,9 @@ def save_to_pickle_files(network_hyperparameters,
 
     with open(os.path.join(file_directory, "recurrent_weights.p"), "wb") as pickle_file:
         pickle.dump(recurrent_weights, pickle_file)
+
+    with open(os.path.join(file_directory, "membrane_decay_factors.p"), "wb") as pickle_file:
+        pickle.dump(membrane_decay_factors, pickle_file)
 
     with open(os.path.join(file_directory, "output_weights.p"), "wb") as pickle_file:
         pickle.dump(output_weights, pickle_file)
@@ -70,10 +74,17 @@ def save_to_pickle_files(network_hyperparameters,
     with open(os.path.join(file_directory, "resulting_recurrent_gradient.p"), "wb") as pickle_file:
         pickle.dump(resulting_recurrent_gradient, pickle_file)
 
+    with open(os.path.join(file_directory, "expected_input_gradient.p"), "wb") as pickle_file:
+        pickle.dump(expected_input_gradient, pickle_file)
+
+    with open(os.path.join(file_directory, "expected_recurrent_gradient.p"), "wb") as pickle_file:
+        pickle.dump(expected_recurrent_gradient, pickle_file)
+
     print("\nSuccessfully saved to pickle files!")
 
 
-def initialize_weights(num_neurons, num_input_channels, num_output_channels):
+def initialize_weights(num_neurons, num_input_channels, num_output_channels,
+                       threshold_voltage, dt, initial_membrane_time_constant):
     # normalized Xavier initializtion
     input_weights_limit = np.sqrt(6) / np.sqrt(num_neurons + num_input_channels)
     input_weights = np.random.uniform(-input_weights_limit, input_weights_limit, size=(num_neurons, num_input_channels))
@@ -81,22 +92,19 @@ def initialize_weights(num_neurons, num_input_channels, num_output_channels):
     recurrent_weights_limit = np.sqrt(6) / np.sqrt(num_neurons + num_neurons)
     recurrent_weights = np.random.uniform(-recurrent_weights_limit, recurrent_weights_limit,
                                           size=(num_neurons, num_neurons))
-    np.fill_diagonal(recurrent_weights, 0.0)
+    np.fill_diagonal(recurrent_weights, - threshold_voltage)
 
     output_weights_limit = np.sqrt(6) / np.sqrt(num_output_channels + num_neurons)
     output_weights = np.random.uniform(-output_weights_limit, output_weights_limit,
                                        size=(num_output_channels, num_neurons))
 
-    # input_weights = np.random.randn(num_neurons, num_input_channels).astype(np.single) * 0.1
-    # recurrent_weights = np.random.randn(num_neurons, num_neurons).astype(np.single) * 0.1
-    # np.fill_diagonal(recurrent_weights, 0.0)
-    # output_weights = np.random.randn(num_output_channels, num_neurons).astype(np.single)
+    membrane_decay_factors = np.ones((num_neurons, 1)) * np.exp(-dt/initial_membrane_time_constant)
 
-    return input_weights, recurrent_weights, output_weights
+    return input_weights, recurrent_weights, output_weights, membrane_decay_factors
 
 
-def initialize_data(num_time_steps, num_batches, num_input_channels):
-    x = np.linspace(0, 2 * np.pi, num_time_steps)
+def initialize_data(num_time_steps, num_batches, num_input_channels, start_value, end_value):
+    x = np.linspace(start_value, end_value, num_time_steps)
     time_series_data = np.array([np.sin(2 / 3 * x), np.cos(x)]).T
     time_series_data_batch = time_series_data.reshape((num_time_steps, 1, num_input_channels))
     time_series_data_batch = np.repeat(time_series_data_batch, num_batches, axis=1).astype(np.single)
@@ -104,18 +112,19 @@ def initialize_data(num_time_steps, num_batches, num_input_channels):
     return time_series_data_batch
 
 
-def convert_to_tensors(input_weights, recurrent_weights, output_weights, time_series_data):
+def convert_to_tensors(input_weights, recurrent_weights, output_weights, time_series_data, membrane_decay_factors):
 
     input_weights_tensor = tf.convert_to_tensor(input_weights, dtype=float)
     recurrent_weights_tensor = tf.convert_to_tensor(recurrent_weights, dtype=float)
     output_weights_tensor = tf.convert_to_tensor(output_weights, dtype=float)
     time_series_data_tensor = tf.convert_to_tensor(time_series_data, dtype=float)
+    membrane_decay_factors_tensor = tf.convert_to_tensor(membrane_decay_factors, dtype=float)
 
-    return input_weights_tensor, recurrent_weights_tensor, output_weights_tensor, time_series_data_tensor
+    return input_weights_tensor, recurrent_weights_tensor, output_weights_tensor, time_series_data_tensor, membrane_decay_factors_tensor
 
 
-def python_forward_pass(input_weights, recurrent_weights, membrane_decay_factors,
-                        time_series_data, threshold_voltage):
+def python_forward_pass(input_weights, recurrent_weights, membrane_time_constants,
+                        time_series_data, threshold_voltage, dt):
 
     num_time_steps, num_batches, num_input_channels = time_series_data.shape
     num_neurons, _ = recurrent_weights.shape
@@ -123,12 +132,14 @@ def python_forward_pass(input_weights, recurrent_weights, membrane_decay_factors
     v = np.zeros((num_batches, num_neurons))
     z = np.zeros((num_batches, num_neurons))
 
+    membrane_decay_factors = np.exp(-dt/membrane_time_constants)
+
     expected_voltages = np.zeros((num_time_steps, num_batches, num_neurons))
     expected_activities = np.zeros((num_time_steps, num_batches, num_neurons))
     base_activity = np.dot(time_series_data, input_weights.T)
 
     for t in range(num_time_steps):
-        v = membrane_decay_factors.T * v + base_activity[t] + np.dot(z, recurrent_weights.T) - threshold_voltage * z
+        v = membrane_decay_factors.T * v + base_activity[t] + np.dot(z, recurrent_weights.T)
         z[v >= threshold_voltage] = 1.0
         z[v < threshold_voltage] = 0.0
 
@@ -153,19 +164,23 @@ def spike_gradient(membrane_voltages, threshold_voltage, dampening_factor=0.3):
 
 def python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
                          partial_dE_dv,
-                         recurrent_weights, membrane_decay_factors,
-                         threshold_voltage, dampening_factor=0.3):
+                         recurrent_weights, membrane_time_constants,
+                         threshold_voltage, dt, dampening_factor=0.3):
+
     num_time_steps, num_batches, num_input_channels = time_series_data.shape
     *_, num_neurons = resulting_voltages.shape
 
     previous_total_dE_dv = np.zeros((num_batches, num_neurons))
     sum_over_k = np.zeros((num_batches, num_neurons))
+    membrane_decay_factors = np.exp(-dt/membrane_time_constants)
 
     dE_dW_in = np.zeros((num_neurons, num_input_channels))
     dE_dW_rec = np.zeros((num_neurons, num_neurons))
     dE_dalpha = np.zeros((num_neurons, 1))
 
     # all_total_dE_dv = np.zeros((num_time_steps, num_batches, num_neurons))
+    # input_components = np.zeros((num_time_steps, num_neurons, num_input_channels))
+    # recurrent_components = np.zeros((num_time_steps, num_neurons, num_neurons))
 
     for time_step in reversed(range(num_time_steps)):
         current_membrane_voltages = resulting_voltages[time_step]
@@ -174,8 +189,7 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
 
         for batch in range(num_batches):
             batchwise_spike_gradients = spike_gradient_approximate[batch]
-            batchwise_dv_k_dv_j = batchwise_spike_gradients.reshape(1, -1) * recurrent_weights + np.diag(
-                membrane_decay_factors[:, 0] - threshold_voltage * batchwise_spike_gradients)
+            batchwise_dv_k_dv_j = batchwise_spike_gradients.reshape(1, -1) * recurrent_weights + np.diag(membrane_decay_factors[:, 0])
 
             batchwise_previous_total_dE_dv = previous_total_dE_dv[batch].reshape(1, -1)
             sum_over_k[batch] = np.dot(batchwise_previous_total_dE_dv, batchwise_dv_k_dv_j)
@@ -183,16 +197,19 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
         current_partial_dE_dv = partial_dE_dv[time_step]
         current_total_dE_dv = current_partial_dE_dv + sum_over_k
 
-        # all_total_dE_dv[time_step] = current_total_dE_dv
-
         dE_dW_in_component = np.dot(current_total_dE_dv.T, time_series_data[time_step])
         dE_dW_rec_component = np.dot(current_total_dE_dv.T, resulting_activations[time_step])
 
-        # try except block to catch numerical under- & overflows
+        # all_total_dE_dv[time_step] = current_total_dE_dv
+        # input_components[time_step] = dE_dW_in_component
+        # recurrent_components[time_step] = dE_dW_rec_component
+
         try:
             if time_step > 0:
                 previous_membrane_voltages = resulting_voltages[time_step - 1]
-                dE_dalpha_component = np.sum(current_total_dE_dv * previous_membrane_voltages, axis=0, keepdims=True)
+                dE_dalpha_component = np.sum(current_total_dE_dv * previous_membrane_voltages,
+                                             axis=0,
+                                             keepdims=True)
             else:
                 dE_dalpha_component = np.zeros((1, num_neurons))
 
@@ -328,11 +345,11 @@ def print_input_weight_discrepancies(expected_weights, calculated_weights):
     print(f"Total number of discrepancies: {num_discrepancies} ({round(num_discrepancies / expected_weights.size * 100, 2)}% of all values)")
 
 
-def print_recurrent_weight_discrepancies(expected_weights, calculated_weights):
+def print_weight_discrepancies(name_of_weights, expected_weights, calculated_weights):
 
     epsilon = 1e-6  # For numerical stability
 
-    print("\nRecurrent weights RELATIVE discrepancies:\n")
+    print(f"\n{name_of_weights} weights RELATIVE discrepancies:\n")
 
     absolute_differences = np.abs(calculated_weights - expected_weights)
     relative_differences = np.abs(absolute_differences / (expected_weights + epsilon))
@@ -354,13 +371,16 @@ def print_recurrent_weight_discrepancies(expected_weights, calculated_weights):
     print(f"Total number of discrepancies: {num_discrepancies} ({round(num_discrepancies / expected_weights.size * 100, 2)}% of all values)")
 
 
-def verify_backward_pass(expected_input_gradient, expected_recurrent_gradient,
-                         calculated_input_gradient, calculated_recurrent_gradient):
+def print_membrane_decay_weight_discepancies(expected_dE_dalpha, resulting_dE_dalpha):
+
+    print("\nMembrane decay weights RELATIVE discrepancies:\n")
+
+
+def verify_backward_pass(expected_input_gradient, expected_recurrent_gradient, expected_membrane_decay_gradient,
+                         calculated_input_gradient, calculated_recurrent_gradient, calculated_membrane_decay_gradient):
 
     input_weights_match = np.allclose(expected_input_gradient, calculated_input_gradient)
     recurrent_weights_match = np.allclose(expected_recurrent_gradient, calculated_recurrent_gradient)
+    membrane_decay_weights_match = np.allclose(expected_membrane_decay_gradient, calculated_membrane_decay_gradient)
 
-    return input_weights_match, recurrent_weights_match
-
-def print_weight_discrepancies():
-    pass
+    return input_weights_match, recurrent_weights_match, membrane_decay_weights_match
