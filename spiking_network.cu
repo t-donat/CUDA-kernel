@@ -150,8 +150,7 @@ BackwardPass::BackwardPass(cublasHandle_t cublas_handle,
 void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                               float* dE_dW_in, float* dE_dW_rec, float* dE_dmembrane_time_constants,
                               float* dE_dmembrane_decay_factors,
-                              float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations,
-                              float* next_membrane_voltages,
+                              float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations, float* next_membrane_voltages,
                               float* current_spike_gradient, float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
                               float* dE_dW_in_component, float* dE_dW_rec_component,
                               float* membrane_decay_factors,
@@ -195,12 +194,11 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                          num_neurons, num_neurons);
 
     CalculateMembraneDecayFactors<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(membrane_decay_factors,
-                                                                                                       membrane_time_constants,
-                                                                                                       delta_t, num_neurons);
-    /*
-    SetDecayFactorDerivativeToZero<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dalpha,
-                                                                                                        num_neurons);
-    */
+                                                                                                                membrane_time_constants,
+                                                                                                                delta_t, num_neurons);
+
+    SetMembraneTimeConstantDerivativeToZero<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_decay_factors, num_neurons);
+    //SetMembraneTimeConstantDerivativeToZero<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_time_constants, num_neurons);
 
     // First time step t = num_time_steps - 1
     CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_input_data,
@@ -211,12 +209,12 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                          resulting_voltages, num_time_steps - 1,
                                                                                          num_batches, num_input_channels);
 
-    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
-                                                                                         resulting_activations, num_time_steps - 1,
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_membrane_voltages,
+                                                                                         resulting_voltages, num_time_steps - 2,
                                                                                          num_batches, num_neurons);
 
-    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_membrane_voltages,
-                                                                                         resulting_activations, num_time_steps - 2,
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
+                                                                                         resulting_activations, num_time_steps - 1,
                                                                                          num_batches, num_neurons);
 
     // At the last time step (t=num_timesteps - 1), the partial gradient is equal to the total gradient
@@ -254,15 +252,33 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     SumUpComponent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
                                                                                              dE_dW_rec_component,
                                                                                              num_neurons, num_neurons);
-    /*
+
     // MEMBRANE TIME CONSTANTS
+
     CalculateDecayFactorDerivative<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_decay_factors,
-                                                                                                        current_total_dE_dv, next_membrane_voltages,
-                                                                                                        num_batches, num_neurons);
+                                                                                                                 current_total_dE_dv, next_membrane_voltages,
+                                                                                                                 num_batches, num_neurons);
+
+
+    /*
+    CalculateDecayFactorDerivative<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_time_constants,
+                                                                                                                 current_total_dE_dv, next_membrane_voltages,
+                                                                                                                 num_batches, num_neurons);
     */
+
+
 
     /*
     // FOR TESTING
+
+    CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(membrane_derivative_components_tensor,
+                                                                                        membrane_tc_derivative_component, num_time_steps - 1,
+                                                                                        1, num_neurons);
+
+    CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(membrane_derivative_progress,
+                                                                                        dE_dmembrane_time_constants, num_time_steps-2,
+                                                                                        1, num_neurons);
+
     CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(total_gradients,
                                                                                         current_total_dE_dv, num_time_steps - 1,
                                                                                         num_batches, num_neurons);
@@ -275,9 +291,15 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                            dE_dW_rec_component, num_time_steps - 1,
                                                                                            num_neurons, num_neurons);
 
+     CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_voltage_tensor,
+                                                                                        next_membrane_voltages, num_time_steps - 1,
+                                                                                        num_batches, num_neurons);
+
     // FOR TESTING
 
     */
+
+
     // Remaining time steps
     for (int t = num_time_steps - 2; t >= 1; --t) {
 
@@ -286,15 +308,16 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                          time_series_data, t,
                                                                                          num_batches, num_input_channels);
 
+        /*
         CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
                                                                                              resulting_voltages, t,
                                                                                              num_batches, num_neurons);
+        */
 
-        /*
         CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
                                                                                              next_membrane_voltages, 0,
                                                                                              num_batches, num_neurons);
-        */
+
 
         CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_membrane_voltages,
                                                                                              resulting_voltages, t-1,
@@ -384,16 +407,33 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                                  dE_dW_rec_component,
                                                                                                  num_neurons, num_neurons);
 
-        /*
-        // MEMBRANE DECAY FACTORS
+        // MEMBRANE TIME CONSTANTS
+
         CalculateDecayFactorDerivative<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_decay_factors,
-                                                                                                            current_total_dE_dv, current_membrane_voltages,
-                                                                                                            num_batches, num_neurons);
+                                                                                                                     current_total_dE_dv, next_membrane_voltages,
+                                                                                                                     num_batches, num_neurons);
+
+        /*
+
+        CalculateDecayFactorDerivative<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_time_constants,
+                                                                                                                     current_total_dE_dv, next_membrane_voltages,
+                                                                                                                     num_batches, num_neurons);
+
         */
+
 
         /*
 
         // FOR TESTING
+
+        CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(membrane_derivative_components_tensor,
+                                                                                        membrane_tc_derivative_component, t,
+                                                                                        1, num_neurons);
+
+        CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(membrane_derivative_progress,
+                                                                                        dE_dmembrane_time_constants, t-1,
+                                                                                        1, num_neurons);
+
         CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(total_gradients,
                                                                                             current_total_dE_dv, t,
                                                                                             num_batches, num_neurons);
@@ -406,8 +446,13 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                                dE_dW_rec_component, t,
                                                                                                num_neurons, num_neurons);
 
+        CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_voltage_tensor,
+                                                                                        next_membrane_voltages, t,
+                                                                                        num_batches, num_neurons);
+
         // FOR TESTING
         */
+
     }
 
     // Last BPTT time step,
@@ -416,10 +461,16 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                          time_series_data, 0,
                                                                                          num_batches, num_input_channels);
 
-    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
-                                                                                             resulting_voltages, 0,
-                                                                                             num_batches, num_neurons);
 
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
+                                                                                         next_membrane_voltages, 0,
+                                                                                         num_batches, num_neurons);
+
+    /*
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_membrane_voltages,
+                                                                                         resulting_voltages, 0,
+                                                                                         num_batches, num_neurons);
+*/
     CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_neuron_activations,
                                                                                              resulting_activations, 0,
                                                                                              num_batches, num_neurons);
@@ -477,6 +528,21 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     SumUpComponent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
                                                                                                  dE_dW_rec_component,
                                                                                                  num_neurons, num_neurons);
+
+    // MEMBRANE TIME CONSTANTS
+
+
+    CalculateMembraneTimeConstantDerivative<<<membraneTimeConstantGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dmembrane_time_constants,
+                                                                                                                          dE_dmembrane_decay_factors,
+                                                                                                                          membrane_decay_factors, membrane_time_constants,
+                                                                                                                          delta_t, num_neurons);
+
+    /*
+    CopyToOutput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_voltage_tensor,
+                                                                                        next_membrane_voltages, 0,
+                                                                                        num_batches, num_neurons);
+    */
+
 
 }
 #endif // GOOGLE_CUDA

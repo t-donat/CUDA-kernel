@@ -14,10 +14,10 @@ __global__ void SetToValue(float* input_matrix,
     }
 }
 
-__global__ void SetDecayFactorDerivativeToZero(float* membrane_decay_factors, const int num_neurons) {
+__global__ void SetMembraneTimeConstantDerivativeToZero(float* membrane_decay_factors, const int num_neurons) {
 
     const int maximum_threads_per_block = 1024;
-    const int neuron_Id = blockIdx.x * maximum_threads_per_block + threadIdx.y * blockDim.x + blockIdx.x;
+    const int neuron_Id = blockIdx.x * maximum_threads_per_block + threadIdx.y * blockDim.x + threadIdx.x;
 
     if (neuron_Id < num_neurons) {
         membrane_decay_factors[neuron_Id] = 0.0f;

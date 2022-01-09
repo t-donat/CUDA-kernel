@@ -52,18 +52,19 @@ __global__ void CalculateTotalGradient(float* current_total_dE_dv,
 }
 
 __global__ void CalculateDecayFactorDerivative(float* dE_dmembrane_decay_factors_component,
-                                               const float* current_total_dE_dv, const float* previous_membrane_voltages,
+                                               const float* current_total_dE_dv, const float* next_membrane_voltages,
                                                const int num_batches, const int num_neurons) {
 
     const int maximum_threads_per_block = 1024;
     const int neuron_Id = blockIdx.x * maximum_threads_per_block + threadIdx.y * blockDim.x + threadIdx.x;
 
     float result = 0.0f;
+    int access_Id;
 
     if (neuron_Id < num_neurons) {
         for (int b = 0; b < num_batches; ++b) {
-            int access_Id = b * num_neurons + neuron_Id;
-            result += current_total_dE_dv[access_Id] * previous_membrane_voltages[access_Id];
+            access_Id = b * num_neurons + neuron_Id;
+            result += current_total_dE_dv[access_Id] * next_membrane_voltages[access_Id];
         }
         dE_dmembrane_decay_factors_component[neuron_Id] += result;
     }

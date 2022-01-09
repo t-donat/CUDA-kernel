@@ -188,6 +188,11 @@ public:
         Tensor* dE_dW_rec = nullptr;
 
         /*
+        TensorShape membrane_derivative_components_shape({num_time_steps, 1, num_neurons});
+        Tensor* membrane_derivative_components_tensor = nullptr;
+        Tensor* membrane_derivative_progress = nullptr;
+
+
         TensorShape total_gradients_shape({num_time_steps, num_batches, num_neurons});
         Tensor* total_gradients = nullptr;
 
@@ -256,8 +261,7 @@ public:
         backward(context, context->eigen_gpu_device(),
                  dE_dW_in->flat<float>().data(), dE_dW_rec->flat<float>().data(), dE_dmembrane_time_constants->flat<float>().data(),
                  dE_dmembrane_decay_factors.flat<float>().data(),
-                 current_input_data.flat<float>().data(), current_membrane_voltages.flat<float>().data(), current_neuron_activations.flat<float>().data(),
-                 next_membrane_voltages.flat<float>().data(),
+                 current_input_data.flat<float>().data(), current_membrane_voltages.flat<float>().data(), current_neuron_activations.flat<float>().data(), next_membrane_voltages.flat<float>().data(),
                  current_spike_gradient.flat<float>().data(), current_partial_dE_dv.flat<float>().data(), previous_total_dE_dv.flat<float>().data(), current_total_dE_dv.flat<float>().data(),
                  dE_dW_in_component.flat<float>().data(), dE_dW_rec_component.flat<float>().data(),
                  membrane_decay_factors.flat<float>().data(),
