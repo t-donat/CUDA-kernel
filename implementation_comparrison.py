@@ -9,7 +9,7 @@ from snn_utils import initialize_weights, initialize_data, convert_to_tensors
 from snn_utils import python_forward_pass, MSE, python_backward_pass
 from snn_utils import verify_forward_pass, verify_backward_pass
 from snn_utils import print_voltage_discrepancies, print_input_weight_discrepancies
-from snn_utils import print_weight_discrepancies#, print_membrane_decay_weight_discepancies
+from snn_utils import print_weight_discrepancies
 from snn_utils import save_to_pickle_files
 
 # -------------------------------------------------------------------

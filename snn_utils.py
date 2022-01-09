@@ -162,7 +162,7 @@ def spike_gradient(membrane_voltages, threshold_voltage, dampening_factor=0.3):
     return dampening_factor * np.maximum(1 - np.abs(membrane_voltages - threshold_voltage) / threshold_voltage, 0.0)
 
 
-def python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
+def old_python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
                          partial_dE_dv,
                          recurrent_weights, membrane_time_constants,
                          threshold_voltage, dt, dampening_factor=0.3):
@@ -237,48 +237,76 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
     return dE_dW_in, dE_dW_rec, dE_dmembrane_time_constants
 
 
-def old_python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
+def python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
                          partial_dE_dv,
-                         recurrent_weights,
-                         threshold_voltage, decay_factor, dampening_factor):
+                         recurrent_weights, membrane_time_constants,
+                         threshold_voltage, dt, dampening_factor=0.3):
 
     num_time_steps, num_batches, num_input_channels = time_series_data.shape
     *_, num_neurons = resulting_voltages.shape
 
     previous_total_dE_dv = np.zeros((num_batches, num_neurons))
     sum_over_k = np.zeros((num_batches, num_neurons))
+    membrane_decay_factors = np.exp(-dt/membrane_time_constants)
 
     dE_dW_in = np.zeros((num_neurons, num_input_channels))
     dE_dW_rec = np.zeros((num_neurons, num_neurons))
+    dE_dalpha = np.zeros((num_neurons, 1))
 
     # all_total_dE_dv = np.zeros((num_time_steps, num_batches, num_neurons))
+    # membrane_decay_components = np.zeros((num_time_steps, 1, num_neurons))
+    # input_components = np.zeros((num_time_steps, num_neurons, num_input_channels))
+    # recurrent_components = np.zeros((num_time_steps, num_neurons, num_neurons))
+    # next_voltages_tensor = np.zeros((num_time_steps, num_batches, num_neurons))
 
     for time_step in reversed(range(num_time_steps)):
         current_membrane_voltages = resulting_voltages[time_step]
-        spike_gradient_approximate = spike_gradient(current_membrane_voltages, threshold_voltage, dampening_factor)
+        spike_gradient_approximate = spike_gradient(current_membrane_voltages, threshold_voltage,
+                                                    dampening_factor=dampening_factor)
 
-        for batch in range(num_batches):
-            batchwise_spike_gradients = spike_gradient_approximate[batch]
-            batchwise_dv_k_dv_j = batchwise_spike_gradients.reshape(1, -1) * recurrent_weights + np.diag(
-                decay_factor - threshold_voltage * batchwise_spike_gradients)
-
-            batchwise_previous_total_dE_dv = previous_total_dE_dv[batch].reshape(1, -1)
-            sum_over_k[batch] = np.dot(batchwise_previous_total_dE_dv, batchwise_dv_k_dv_j)
+        dv_k_dv_j = np.einsum("bn,mn->bmn", spike_gradient_approximate, recurrent_weights) + np.diag(membrane_decay_factors[:, 0])[
+                                                                                 None, :, :]
+        sum_over_k = np.einsum("bn,bnm->bm", previous_total_dE_dv, dv_k_dv_j)
 
         current_partial_dE_dv = partial_dE_dv[time_step]
         current_total_dE_dv = current_partial_dE_dv + sum_over_k
 
-        # all_total_dE_dv[time_step] = current_total_dE_dv
-
         dE_dW_in_component = np.dot(current_total_dE_dv.T, time_series_data[time_step])
         dE_dW_rec_component = np.dot(current_total_dE_dv.T, resulting_activations[time_step])
 
+        try:
+            if time_step > 0:
+                next_membrane_voltages = resulting_voltages[time_step - 1]
+                dE_dalpha_component = np.sum(current_total_dE_dv * next_membrane_voltages,
+                                             axis=0,
+                                             keepdims=True)
+            else:
+                dE_dalpha_component = np.zeros((1, num_neurons))
+
+        except:
+            print(epoch)
+            print(current_total_dE_dv)
+            print(next_membrane_voltages)
+            print(dE_dalpha_component)
+
+            raise ValueError("hi")
+
         dE_dW_in += dE_dW_in_component
         dE_dW_rec += dE_dW_rec_component
+        dE_dalpha += dE_dalpha_component.T
 
         previous_total_dE_dv = current_total_dE_dv
 
-    return dE_dW_in, dE_dW_rec
+        # all_total_dE_dv[time_step] = current_total_dE_dv
+        # input_components[time_step] = dE_dW_in_component
+        # recurrent_components[time_step] = dE_dW_rec_component
+        # next_voltages_tensor[time_step] = next_membrane_voltages
+        # membrane_decay_components[time_step] = dE_dalpha_component
+
+    dE_dmembrane_time_constants = (dE_dalpha * dt * membrane_decay_factors) / (
+                membrane_time_constants * membrane_time_constants)
+
+    return dE_dW_in, dE_dW_rec, dE_dmembrane_time_constants
 
 
 def verify_forward_pass(expected_voltages, expected_activations, calculated_voltages, calculated_activations):
