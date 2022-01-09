@@ -179,8 +179,10 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
     dE_dalpha = np.zeros((num_neurons, 1))
 
     # all_total_dE_dv = np.zeros((num_time_steps, num_batches, num_neurons))
+    # membrane_decay_components = np.zeros((num_time_steps, 1, num_neurons))
     # input_components = np.zeros((num_time_steps, num_neurons, num_input_channels))
     # recurrent_components = np.zeros((num_time_steps, num_neurons, num_neurons))
+    # next_voltages_tensor = np.zeros((num_time_steps, num_batches, num_neurons))
 
     for time_step in reversed(range(num_time_steps)):
         current_membrane_voltages = resulting_voltages[time_step]
@@ -200,14 +202,10 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
         dE_dW_in_component = np.dot(current_total_dE_dv.T, time_series_data[time_step])
         dE_dW_rec_component = np.dot(current_total_dE_dv.T, resulting_activations[time_step])
 
-        # all_total_dE_dv[time_step] = current_total_dE_dv
-        # input_components[time_step] = dE_dW_in_component
-        # recurrent_components[time_step] = dE_dW_rec_component
-
         try:
             if time_step > 0:
-                previous_membrane_voltages = resulting_voltages[time_step - 1]
-                dE_dalpha_component = np.sum(current_total_dE_dv * previous_membrane_voltages,
+                next_membrane_voltages = resulting_voltages[time_step - 1]
+                dE_dalpha_component = np.sum(current_total_dE_dv * next_membrane_voltages,
                                              axis=0,
                                              keepdims=True)
             else:
@@ -216,7 +214,7 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
         except:
             print(epoch)
             print(current_total_dE_dv)
-            print(previous_membrane_voltages)
+            print(next_membrane_voltages)
             print(dE_dalpha_component)
 
             raise ValueError("hi")
@@ -227,7 +225,16 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
 
         previous_total_dE_dv = current_total_dE_dv
 
-    return dE_dW_in, dE_dW_rec, dE_dalpha
+        # all_total_dE_dv[time_step] = current_total_dE_dv
+        # input_components[time_step] = dE_dW_in_component
+        # recurrent_components[time_step] = dE_dW_rec_component
+        # next_voltages_tensor[time_step] = next_membrane_voltages
+        # membrane_decay_components[time_step] = dE_dalpha_component
+
+    dE_dmembrane_time_constants = (dE_dalpha * dt * membrane_decay_factors) / (
+                membrane_time_constants * membrane_time_constants)
+
+    return dE_dW_in, dE_dW_rec, dE_dmembrane_time_constants
 
 
 def old_python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
@@ -376,11 +383,11 @@ def print_membrane_decay_weight_discepancies(expected_dE_dalpha, resulting_dE_da
     print("\nMembrane decay weights RELATIVE discrepancies:\n")
 
 
-def verify_backward_pass(expected_input_gradient, expected_recurrent_gradient, expected_membrane_decay_gradient,
-                         calculated_input_gradient, calculated_recurrent_gradient, calculated_membrane_decay_gradient):
+def verify_backward_pass(expected_input_gradient, expected_recurrent_gradient, expected_time_constant_gradient,
+                         calculated_input_gradient, calculated_recurrent_gradient, calculated_time_constant_gradient):
 
     input_weights_match = np.allclose(expected_input_gradient, calculated_input_gradient)
     recurrent_weights_match = np.allclose(expected_recurrent_gradient, calculated_recurrent_gradient)
-    membrane_decay_weights_match = np.allclose(expected_membrane_decay_gradient, calculated_membrane_decay_gradient)
+    membrane_time_constants_match = np.allclose(expected_time_constant_gradient, calculated_time_constant_gradient)
 
-    return input_weights_match, recurrent_weights_match, membrane_decay_weights_match
+    return input_weights_match, recurrent_weights_match, membrane_time_constants_match

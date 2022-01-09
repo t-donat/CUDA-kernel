@@ -108,11 +108,13 @@ partial_dE_dv_tensor = tf.convert_to_tensor(partial_dE_dv, dtype=float)
 
 start = time.time()
 (expected_dE_dW_in,
-    expected_dE_dW_rec,
-    expected_dE_dalpha) = python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
-                                               partial_dE_dv,
-                                               recurrent_weights, membrane_time_constants,
-                                               threshold_voltage, dt, dampening_factor=gradient_scaling_factor)
+ expected_dE_dW_rec,
+ expected_dE_dmembrane_time_constants) = python_backward_pass(time_series_data,
+                                                              resulting_voltages, resulting_activations,
+                                                              partial_dE_dv,
+                                                              recurrent_weights, membrane_time_constants,
+                                                              threshold_voltage, dt,
+                                                              dampening_factor=gradient_scaling_factor)
 
 python_backward_duration = time.time() - start
 
@@ -120,26 +122,22 @@ start = time.time()
 
 (resulting_dE_dW_in_tensor,
  resulting_dE_dW_rec_tensor,
- resulting_dE_dmembrane_time_constants) = spiking_module.backward_pass(partial_dE_dv_tensor,
-                                                                       recurrent_weights_tensor,
-                                                                       membrane_time_constants_tensor,
-                                                                       time_series_data_tensor,
-                                                                       resulting_voltages_tensor,
-                                                                       resulting_activations_tensor,
-                                                                       threshold_voltage=threshold_voltage,
-                                                                       delta_t=dt,
-                                                                       gradient_scaling_factor=gradient_scaling_factor,
-                                                                       debug_mode=debug_mode)
+ resulting_dE_dmembrane_time_constants_tensor) = spiking_module.backward_pass(partial_dE_dv_tensor,
+                                                                              recurrent_weights_tensor,
+                                                                              membrane_time_constants_tensor,
+                                                                              time_series_data_tensor,
+                                                                              resulting_voltages_tensor,
+                                                                              resulting_activations_tensor,
+                                                                              threshold_voltage=threshold_voltage,
+                                                                              delta_t=dt,
+                                                                              gradient_scaling_factor=gradient_scaling_factor,
+                                                                              debug_mode=debug_mode)
 
 cuda_backward_duration = time.time() - start
 
-# resulting_dE_dW_in = expected_dE_dW_in
-# resulting_dE_dW_rec = expected_dE_dW_rec
-resulting_dE_dalpha = expected_dE_dalpha
-
 resulting_dE_dW_in = resulting_dE_dW_in_tensor.numpy()
 resulting_dE_dW_rec = resulting_dE_dW_rec_tensor.numpy()
-#resulting_dE_dalpha = resulting_dE_dalpha_tensor.numpy()
+resulting_dE_dmembrane_time_constants = resulting_dE_dmembrane_time_constants_tensor.numpy()
 
 # -------------------------------------------------------------------
 # VALIDATING THE RESULTS
@@ -153,8 +151,10 @@ resulting_dE_dW_rec = resulting_dE_dW_rec_tensor.numpy()
 
 (input_weights_match,
  recurrent_weights_match,
- membrane_decay_weights_match) = verify_backward_pass(expected_dE_dW_in, expected_dE_dW_rec, expected_dE_dalpha,
-                                                      resulting_dE_dW_in, resulting_dE_dW_rec, resulting_dE_dalpha)
+ membrane_time_constants_match) = verify_backward_pass(expected_dE_dW_in, expected_dE_dW_rec,
+                                                       expected_dE_dmembrane_time_constants,
+                                                       resulting_dE_dW_in, resulting_dE_dW_rec,
+                                                       resulting_dE_dmembrane_time_constants)
 if verbose:
     print("Forward Pass Results: ")
 
@@ -195,16 +195,22 @@ if verbose:
     print("\nBackward Pass Results: ")
     print(f"Do the input weights match between Python and CUDA: {input_weights_match}")
     print(f"Do the recurrent weights match between Python and CUDA: {recurrent_weights_match}")
-    print(f"Do the membrane decay weights match between Python and CUDA: {membrane_decay_weights_match}")
+    print(f"Do the membrane time constants match between Python and CUDA: {membrane_time_constants_match}")
 
     if not input_weights_match:
-        print_weight_discrepancies("Input", expected_dE_dW_in, resulting_dE_dW_in)
+        print_weight_discrepancies("Input",
+                                   expected_dE_dW_in,
+                                   resulting_dE_dW_in)
 
     if not recurrent_weights_match:
-        print_weight_discrepancies("Recurrent", expected_dE_dW_rec, resulting_dE_dW_rec)
+        print_weight_discrepancies("Recurrent",
+                                   expected_dE_dW_rec,
+                                   resulting_dE_dW_rec)
 
-    if not membrane_decay_weights_match:
-        print_weight_discrepancies("Membrane Decay", expected_dE_dalpha, resulting_dE_dalpha)
+    if not membrane_time_constants_match:
+        print_weight_discrepancies("Membrane Time Constant",
+                                   expected_dE_dmembrane_time_constants,
+                                   resulting_dE_dmembrane_time_constants)
 
     print("\nRuntimes:")
     print("Forward Pass")
@@ -238,17 +244,23 @@ if save_data:
                          expected_dE_dW_in, expected_dE_dW_rec,
                          resulting_dE_dW_in, resulting_dE_dW_rec)
 
-    #with open(os.path.join(".",  "data", "gradient_data", "expected_total_gradients.p"), "wb") as pickle_file:
-    #    pickle.dump(expected_total_gradients, pickle_file)
+    #with open(os.path.join(".",  "data", "gradient_data", "expected_alpha_components.p"), "wb") as pickle_file:
+    #    pickle.dump(membrane_decay_components, pickle_file)
 
-    #with open(os.path.join(".",  "data", "gradient_data", "expected_input_gradients.p"), "wb") as pickle_file:
-    #    pickle.dump(expected_input_gradients, pickle_file)
+    #with open(os.path.join(".",  "data", "gradient_data", "resulting_alpha_components.p"), "wb") as pickle_file:
+    #    pickle.dump(resulting_alpha_components_tensor.numpy(), pickle_file)
 
-    #with open(os.path.join(".",  "data", "gradient_data", "expected_recurrent_gradients.p"), "wb") as pickle_file:
-    #    pickle.dump(expected_recurrent_gradients, pickle_file)
+    #with open(os.path.join(".",  "data", "gradient_data", "total_derivatives.p"), "wb") as pickle_file:
+    #    pickle.dump(total_derivatives, pickle_file)
 
-    #with open(os.path.join(".",  "data", "gradient_data", "resulting_total_gradients.p"), "wb") as pickle_file:
-    #    pickle.dump(resulting_total_gradients.numpy(), pickle_file)
+    #with open(os.path.join(".",  "data", "gradient_data", "expected_dE_dalpha.p"), "wb") as pickle_file:
+    #    pickle.dump(expected_dE_dalpha, pickle_file)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "resulting_dE_dalpha.p"), "wb") as pickle_file:
+    #    pickle.dump(resulting_dE_dalpha, pickle_file)
+
+    #with open(os.path.join(".",  "data", "gradient_data", "dE_dalpha_progress.p"), "wb") as pickle_file:
+    #    pickle.dump(alpha_progress, pickle_file)
 
     #with open(os.path.join(".",  "data", "gradient_data", "resulting_input_gradients.p"), "wb") as pickle_file:
     #    pickle.dump(resulting_input_gradients.numpy(), pickle_file)
