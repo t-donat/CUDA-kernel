@@ -46,10 +46,9 @@ gradient_scaling_factor = 0.3
 
 
 (input_weights, recurrent_weights,
- output_weights, membrane_decay_factors) = initialize_weights(num_neurons, num_input_channels, num_output_channels,
-                                                              threshold_voltage, dt, initial_membrane_time_constant)
+ output_weights, membrane_time_constants) = initialize_weights(num_neurons, num_input_channels, num_output_channels,
+                                                              threshold_voltage, initial_membrane_time_constant)
 
-membrane_time_constants = np.ones((num_neurons, 1)) * initial_membrane_time_constant
 membrane_time_constants_tensor = tf.convert_to_tensor(membrane_time_constants, dtype=float)
 
 
@@ -58,8 +57,8 @@ time_series_data = initialize_data(num_time_steps, num_batches, num_input_channe
 
 (input_weights_tensor, recurrent_weights_tensor,
  output_weights_tensor, time_series_data_tensor,
- membrane_decay_factors_tensor) = convert_to_tensors(input_weights, recurrent_weights, output_weights,
-                                                     time_series_data, membrane_decay_factors)
+ membrane_time_constants_tensor) = convert_to_tensors(input_weights, recurrent_weights, output_weights,
+                                                     time_series_data, membrane_time_constants)
 
 
 # -------------------------------------------------------------------

@@ -84,7 +84,7 @@ def save_to_pickle_files(network_hyperparameters,
 
 
 def initialize_weights(num_neurons, num_input_channels, num_output_channels,
-                       threshold_voltage, dt, initial_membrane_time_constant):
+                       threshold_voltage, initial_membrane_time_constant):
     # normalized Xavier initializtion
     input_weights_limit = np.sqrt(6) / np.sqrt(num_neurons + num_input_channels)
     input_weights = np.random.uniform(-input_weights_limit, input_weights_limit, size=(num_neurons, num_input_channels))
@@ -98,7 +98,7 @@ def initialize_weights(num_neurons, num_input_channels, num_output_channels,
     output_weights = np.random.uniform(-output_weights_limit, output_weights_limit,
                                        size=(num_output_channels, num_neurons))
 
-    membrane_decay_factors = np.ones((num_neurons, 1)) * np.exp(-dt/initial_membrane_time_constant)
+    membrane_decay_factors = np.ones((num_neurons, 1)) * initial_membrane_time_constant
 
     return input_weights, recurrent_weights, output_weights, membrane_decay_factors
 
@@ -112,15 +112,16 @@ def initialize_data(num_time_steps, num_batches, num_input_channels, start_value
     return time_series_data_batch
 
 
-def convert_to_tensors(input_weights, recurrent_weights, output_weights, time_series_data, membrane_decay_factors):
+def convert_to_tensors(input_weights, recurrent_weights, output_weights, time_series_data, membrane_time_constants):
 
     input_weights_tensor = tf.convert_to_tensor(input_weights, dtype=float)
     recurrent_weights_tensor = tf.convert_to_tensor(recurrent_weights, dtype=float)
     output_weights_tensor = tf.convert_to_tensor(output_weights, dtype=float)
     time_series_data_tensor = tf.convert_to_tensor(time_series_data, dtype=float)
-    membrane_decay_factors_tensor = tf.convert_to_tensor(membrane_decay_factors, dtype=float)
+    membrane_time_constants_tensor = tf.convert_to_tensor(membrane_time_constants, dtype=float)
 
-    return input_weights_tensor, recurrent_weights_tensor, output_weights_tensor, time_series_data_tensor, membrane_decay_factors_tensor
+    return (input_weights_tensor, recurrent_weights_tensor, output_weights_tensor,
+            time_series_data_tensor, membrane_time_constants_tensor)
 
 
 def python_forward_pass(input_weights, recurrent_weights, membrane_time_constants,
