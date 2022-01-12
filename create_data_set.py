@@ -3,6 +3,8 @@ import pathlib
 import argparse
 import pickle
 import mne
+import json
+import numpy as np
 
 parser = argparse.ArgumentParser(description='Create a Datasset out of .gdf files')
 parser.add_argument("--dest",
@@ -52,6 +54,9 @@ def extract_data(participant_run_path, data_set_directory_path):
     cue_annotations = data_set.annotations.to_data_frame()
     num_entries, _ = cue_annotations.shape
 
+    time_steps = []
+    input_channels = []
+
     for i in range(0, num_entries, 7):
 
         try:
@@ -60,7 +65,7 @@ def extract_data(participant_run_path, data_set_directory_path):
             trial_end_entry = cue_annotations.iloc[i + 4]
 
         except IndexError:
-            print("Indexing problem")
+            # print("Indexing problem")
             continue
 
         trial_start_code = int(trial_start_entry.loc['description'])
@@ -92,6 +97,14 @@ def extract_data(participant_run_path, data_set_directory_path):
         with open(os.path.join(data_set_directory_path, file_name), mode="wb") as pickle_file:
             pickle.dump(sample_data, pickle_file)
 
+        num_input_channels, num_time_steps = sample_data.shape
+
+        time_steps.append(num_time_steps)
+        input_channels.append(num_input_channels)
+        # array_lengths.append(data_length)
+
+    return time_steps, input_channels
+
 
 if __name__ == '__main__':
     args = parser.parse_args()
@@ -100,7 +113,42 @@ if __name__ == '__main__':
     data_set_directory = os.path.join(target_directory, "dataset")
     os.makedirs(data_set_directory, exist_ok=True)
 
+    # all_array_lengths = []
+    all_time_steps = []
+    all_input_channels = []
+    hyperparameters = {}
+    first_run = True
+
     for participant_directory in pathlib.Path(target_directory).glob('P*'):
 
         for participant_run in participant_directory.glob("*.gdf"):
-            extract_data(participant_run, data_set_directory)
+            time_steps, input_channels = extract_data(participant_run, data_set_directory)
+
+            all_time_steps.extend(time_steps)
+            all_input_channels.extend(input_channels)
+
+            if first_run:
+                data_set = mne.io.read_raw_gdf(participant_run)
+                hyperparameters['lowpass_frequency'] = data_set.info["lowpass"]
+                hyperparameters['sampling_frequency'] = data_set.info["sfreq"]
+
+                first_run = False
+        # all_array_lengths.extend(current_array_lengths)
+
+    unique_num_time_steps = np.unique(all_time_steps)
+    unique_input_channels = np.unique(all_input_channels)
+
+    assert len(unique_num_time_steps) == 1
+    assert len(unique_input_channels) == 1
+
+    hyperparameters['num_classes'] = int(np.max(list(class_cue_conversion_table.values())))
+    hyperparameters['num_time_steps'] = int(unique_num_time_steps[0])
+    hyperparameters['num_input_channels'] = int(unique_input_channels[0])
+
+    with open(os.path.join(target_directory, "dataset", "hyperparameters.json"), "w") as hyperparameter_file:
+        json.dump(hyperparameters, hyperparameter_file, indent=4)
+
+    # with open("log.p", "wb") as pickle_file:
+    #    pickle.dump(all_array_lengths, pickle_file)
+
+    print(f"\nDataset created and saved at {os.path.abspath(os.path.join(target_directory, 'dataset'))}")
