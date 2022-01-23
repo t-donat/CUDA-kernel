@@ -141,11 +141,13 @@ if __name__ == '__main__':
     assert len(unique_num_time_steps) == 1
     assert len(unique_input_channels) == 1
 
-    hyperparameters['num_classes'] = int(np.max(list(class_cue_conversion_table.values())))
+    hyperparameters['num_classes'] = int(np.max(list(class_cue_conversion_table.values()))) + 1
     hyperparameters['num_time_steps'] = int(unique_num_time_steps[0])
     hyperparameters['num_input_channels'] = int(unique_input_channels[0])
 
-    with open(os.path.join(target_directory, "dataset", "hyperparameters.json"), "w") as hyperparameter_file:
+    with open(os.path.join(target_directory,
+                           "dataset",
+                           "hyperparameters.json"), "w") as hyperparameter_file:
         json.dump(hyperparameters, hyperparameter_file, indent=4)
 
     # with open("log.p", "wb") as pickle_file:

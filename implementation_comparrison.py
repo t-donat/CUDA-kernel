@@ -5,12 +5,11 @@ import time
 import pickle
 import os
 
-from snn_utils import initialize_weights, initialize_data, convert_to_tensors
-from snn_utils import python_forward_pass, MSE, python_backward_pass
-from snn_utils import verify_forward_pass, verify_backward_pass
-from snn_utils import print_voltage_discrepancies, print_input_weight_discrepancies
-from snn_utils import print_weight_discrepancies
-from snn_utils import save_to_pickle_files
+from rsnn_utils.io import save_to_pickle_files
+from rsnn_utils.rsnn import initialize_weights, initialize_data, convert_to_tensors
+from rsnn_utils.rsnn import python_forward_pass, python_backward_pass
+from rsnn_utils.validation import verify_forward_pass, verify_backward_pass
+from rsnn_utils.validation import print_voltage_discrepancies, print_weight_discrepancies
 
 # -------------------------------------------------------------------
 # CONFIG
@@ -238,7 +237,7 @@ if save_data:
                                 threshold_voltage))
 
     save_to_pickle_files(hyperparameters,
-                         input_weights, recurrent_weights, membrane_decay_factors, output_weights,
+                         input_weights, recurrent_weights, membrane_time_constants, output_weights,
                          time_series_data, resulting_voltages, resulting_activations,
                          expected_dE_dW_in, expected_dE_dW_rec,
                          resulting_dE_dW_in, resulting_dE_dW_rec)
