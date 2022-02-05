@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 import pathlib
 import pickle
 
@@ -99,6 +100,7 @@ def turn_into_batches(samples, labels, batch_size):
 
     return batched_data, batched_targets
 
+
 def find_class_with_max_probability(data_of_run):
     num_time_steps, num_output_channels = data_of_run.shape
 
@@ -109,35 +111,67 @@ def find_class_with_max_probability(data_of_run):
     return class_index, time_index
 
 
+def find_indices_of_max_probabilities(data_of_run):
+    num_time_steps, batch_size, num_classes = data_of_run.get_shape()
+
+    flattened_data = tf.reshape(tf.transpose(data_of_run, perm=[1, 0, 2]), [batch_size, -1])
+    argmax_indices = tf.math.argmax(flattened_data, axis=1)
+
+    time_step_indices = argmax_indices // num_classes
+    neuron_indices = argmax_indices % num_classes
+
+    resulting_indices = tf.transpose(tf.stack((time_step_indices, range(batch_size), neuron_indices)))
+
+    return resulting_indices
+
+
 def evaluate_model(W_in, W_rec, W_out, tau_membrane,
                    output_time_window, threshold_voltage, dt, num_time_steps,
-                   test_samples, test_labels):
-    predictions_on_test_set = []
+                   test_samples, test_labels,
+                   rsnn_forward_pass_function):
+
+    test_batch_accuracies = []
+    test_batch_loss = []
+
+    num_neurons = W_rec.shape[0]
 
     for batch_data, batch_labels in zip(test_samples, test_labels):
         current_batch_size = batch_data.shape[1]
 
-        resulting_voltages, resulting_activations = python_forward_pass(W_in, W_rec, tau_membrane,
-                                                                        batch_data,
-                                                                        threshold_voltage, dt)
+        resulting_voltages, resulting_activations = rsnn_forward_pass_function(W_in, W_rec, tau_membrane,
+                                                                               batch_data,
+                                                                               threshold_voltage=threshold_voltage,
+                                                                               delta_t=dt)
 
-        smoothed_spikes = np.zeros_like(resulting_activations)
-        for i in range(output_time_window, num_time_steps):
-            smoothed_spikes[i] = np.mean(resulting_activations[i - output_time_window: i], axis=0)
+        smoothed_spikes = tf.stack([tf.math.reduce_mean(resulting_activations[i - output_time_window: i], axis=0)
+                                    if i >= output_time_window else tf.zeros(shape=[current_batch_size, num_neurons])
+                                    for i in range(num_time_steps)])
 
-        network_output = np.dot(smoothed_spikes, W_out.T)
+        network_output = tf.linalg.matmul(smoothed_spikes, W_out, transpose_b=True)
 
-        softmax_output = np.exp(network_output - np.max(network_output))
-        softmax_output = softmax_output / np.sum(softmax_output, axis=-1, keepdims=True)
+        softmax_output = tf.math.exp(network_output - np.max(network_output))
+        softmax_output = softmax_output / tf.math.reduce_sum(softmax_output, axis=-1, keepdims=True)
 
-        for b in range(current_batch_size):
-            predicted_class, _ = find_class_with_max_probability(softmax_output[:, b])
-            ground_truth_distribution = batch_labels[b]
+        indices_with_highest_probability = find_indices_of_max_probabilities(softmax_output)
+        time_step_with_highest_prob_per_sample = indices_with_highest_probability[:, :2]
+        predicted_classes = indices_with_highest_probability[:, 2]
 
-            prediction_correct = ground_truth_distribution[predicted_class] == 1
+        # LOSS
+        # only need the time and batch index to calculate loss
+        predicted_distribution = tf.gather_nd(softmax_output, time_step_with_highest_prob_per_sample)
+        # 'batch_labels' contains the one hot encoded ground truth
+        ground_truth_distribution = batch_labels
+        batch_cost = (tf.reduce_sum(- ground_truth_distribution * tf.math.log(predicted_distribution)) /
+                      current_batch_size).numpy()
 
-            predictions_on_test_set.append(prediction_correct)
+        # ACCURACY
+        ground_truth_classes = tf.where(ground_truth_distribution)[:, 1]
+        batch_accuracy = tf.reduce_mean(tf.cast(predicted_classes == ground_truth_classes, tf.float32)).numpy()
 
-        test_set_accuracy = np.mean(predictions_on_test_set)
+        test_batch_accuracies.append(batch_accuracy)
+        test_batch_loss.append(batch_cost)
 
-        return test_set_accuracy
+    test_set_accuracy = np.mean(test_batch_accuracies)
+    test_set_loss = np.mean(test_batch_loss)
+
+    return test_set_accuracy, test_set_loss

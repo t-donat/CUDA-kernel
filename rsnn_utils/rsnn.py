@@ -48,6 +48,17 @@ def convert_to_tensors(input_weights, recurrent_weights, output_weights, time_se
             time_series_data_tensor, membrane_time_constants_tensor)
 
 
+def convert_batch_to_tensors(batched_data):
+
+    batched_data_as_tensors = []
+
+    for current_batch in batched_data:
+        current_batch_tensor = tf.convert_to_tensor(current_batch, dtype=float)
+        batched_data_as_tensors.append(current_batch_tensor)
+
+    return batched_data_as_tensors
+
+
 def python_forward_pass(input_weights, recurrent_weights, membrane_time_constants,
                         time_series_data, threshold_voltage, dt):
 
@@ -85,6 +96,10 @@ def MSE(expected_output, network_output):
 def spike_gradient(membrane_voltages, threshold_voltage, dampening_factor=0.3):
 
     return dampening_factor * np.maximum(1 - np.abs(membrane_voltages - threshold_voltage) / threshold_voltage, 0.0)
+
+
+def calculate_spike_gradient(membrane_voltages, threshold_voltage, dampening_factor=0.3):
+    return dampening_factor * tf.math.maximum(1 - tf.math.abs(membrane_voltages - threshold_voltage) / threshold_voltage, 0.0)
 
 
 def old_python_backward_pass(time_series_data, resulting_voltages, resulting_activations,
