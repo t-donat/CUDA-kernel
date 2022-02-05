@@ -6,7 +6,7 @@ import time
 import pickle
 import os
 
-from snn_utils import initialize_weights, convert_to_tensors, MSE, spike_gradient
+from rsnn_utils.rsnn import initialize_weights, convert_to_tensors, spike_gradient
 
 
 # -------------------------------------------------------------------
