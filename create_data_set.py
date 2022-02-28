@@ -15,19 +15,22 @@ event_annotations = {0x308: "supination_class_cue",
                      0x309: "pronation_class_cue",
                      0x30B: "hand_open_class_cue",
                      0x39D: "palmar_grasp_class_cue",
-                     0x39E: "lateral_grasp_class_cue"}
+                     0x39E: "lateral_grasp_class_cue",
+                     0x39F: "rest_class_clue"}
 
 class_cue_conversion_table = {0x308: 0,
                               0x309: 1,
                               0x30B: 2,
                               0x39D: 3,
-                              0x39E: 4}
+                              0x39E: 4,
+                              0x39F: 5}
 
 class_cue_count_table = {0x308: 0,
                          0x309: 0,
                          0x30B: 0,
                          0x39D: 0,
-                         0x39E: 0}
+                         0x39E: 0,
+                         0x39F: 0}
 
 
 def verify_entries(trial_start_code, class_cue_code, trial_end_code):
@@ -83,7 +86,7 @@ def extract_data(participant_run_path, data_set_directory_path):
         entries_ok = verify_entries(trial_start_code, class_cue_code, trial_end_code)
 
         if not entries_ok:
-            print("Not ok")
+            # print("Not ok")
             continue
 
         sample_data = raw_data[:, trial_start_index:trial_end_index]
@@ -106,6 +109,55 @@ def extract_data(participant_run_path, data_set_directory_path):
     return time_steps, input_channels
 
 
+def extract_rest_data(participant_run_path, data_set_directory_path):
+    global class_cue_conversion_table
+    global class_cue_count_table
+
+    time_steps = []
+    input_channels = []
+
+    data_set = mne.io.read_raw_gdf(participant_run_path)
+
+    data_info = data_set.info
+    raw_data = data_set.get_data()
+
+    num_eeg_channels, num_time_steps = raw_data.shape
+
+    sampling_frequency = data_info["sfreq"]
+
+    expected_sample_length = int(5 * sampling_frequency)
+    time_step_buffer = 0  # buffer between samples
+    step_size = expected_sample_length + time_step_buffer
+    assert expected_sample_length == 1280, "Sample length is incorrect"
+
+    class_cue_code = 0x39F
+    sample_class = class_cue_conversion_table[class_cue_code]  # == 5
+
+    for i in range(0, num_time_steps, step_size):
+        current_sample = raw_data[:, i: i+expected_sample_length]
+        actual_input_channels, actual_sample_length = current_sample.shape
+
+        if actual_sample_length != expected_sample_length:
+            continue
+
+        time_steps.append(actual_sample_length)
+        input_channels.append(actual_input_channels)
+
+        sample_number = class_cue_count_table[class_cue_code]
+
+        if sample_number in [100, 1000, 2000, 3000]:
+            print("wow")
+
+        class_cue_count_table[class_cue_code] += 1
+
+        file_name = f"{sample_class}_{sample_number}.p"
+
+        with open(os.path.join(data_set_directory_path, file_name), mode="wb") as pickle_file:
+            pickle.dump(current_sample, pickle_file)
+
+    return time_steps, input_channels
+
+
 if __name__ == '__main__':
     args = parser.parse_args()
     target_directory = args.target_directory
@@ -122,7 +174,17 @@ if __name__ == '__main__':
     for participant_directory in pathlib.Path(target_directory).glob('P*'):
 
         for participant_run in participant_directory.glob("*.gdf"):
-            time_steps, input_channels = extract_data(participant_run, data_set_directory)
+
+            if np.any([run_name in participant_run.name for run_name in ["Run 1.gdf",
+                                                                         "Run 2.gdf",
+                                                                         "Run 8.gdf",
+                                                                         "Run 9.gdf",
+                                                                         "Run 14.gdf",
+                                                                         "Run 15.gdf"]]):
+                time_steps, input_channels = extract_rest_data(participant_run, data_set_directory)
+
+            else:
+                time_steps, input_channels = extract_data(participant_run, data_set_directory)
 
             all_time_steps.extend(time_steps)
             all_input_channels.extend(input_channels)
@@ -153,4 +215,13 @@ if __name__ == '__main__':
     # with open("log.p", "wb") as pickle_file:
     #    pickle.dump(all_array_lengths, pickle_file)
 
-    print(f"\nDataset created and saved at {os.path.abspath(os.path.join(target_directory, 'dataset'))}")
+    print("Class distribution:")
+
+    for class_cue, class_count in class_cue_count_table.items():
+        class_number = class_cue_conversion_table[class_cue]
+        class_name = event_annotations[class_cue]
+        print(f"Class {class_number} ({class_name}): {class_count}")
+
+    print(f"\nExtracted {np.sum(list(class_cue_count_table.values()))} samples in total")
+    print(f"Dataset created and saved at {os.path.abspath(os.path.join(target_directory, 'dataset'))}")
+
