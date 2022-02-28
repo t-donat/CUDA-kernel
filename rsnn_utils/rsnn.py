@@ -51,12 +51,16 @@ def convert_to_tensors(input_weights, recurrent_weights, output_weights, time_se
 def convert_batch_to_tensors(batched_data):
 
     batched_data_as_tensors = []
+    batch_sizes = []
 
     for current_batch in batched_data:
         current_batch_tensor = tf.convert_to_tensor(current_batch, dtype=float)
         batched_data_as_tensors.append(current_batch_tensor)
 
-    return batched_data_as_tensors
+        current_batch_size = current_batch_tensor.shape[1]
+        batch_sizes.append(current_batch_size)
+
+    return batched_data_as_tensors, batch_sizes
 
 
 def python_forward_pass(input_weights, recurrent_weights, membrane_time_constants,

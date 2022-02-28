@@ -34,8 +34,10 @@ def collect_data(target_directory, down_sample_rate, num_output_channels):
 
 
 def normalize_data(original_data, normalization_percentile):
-    top_limit = np.percentile(original_data, 100 - normalization_percentile, axis=(0, 2), keepdims=True)
-    bottom_limit = np.percentile(original_data, normalization_percentile, axis=(0, 2), keepdims=True)
+    top_limit = np.percentile(original_data, 100 - normalization_percentile, axis=(0, 2),
+                              keepdims=True, overwrite_input=True)
+    bottom_limit = np.percentile(original_data, normalization_percentile, axis=(0, 2),
+                                 keepdims=True, overwrite_input=True)
 
     normalized_data = 2 * (original_data - bottom_limit) / (top_limit - bottom_limit) - 1
     return normalized_data, top_limit, bottom_limit
@@ -65,22 +67,23 @@ def sample_down(original_sample, down_sample_rate):
     return down_sampled_data
 
 
-def train_test_split(samples, labels, data_split):
-    if data_split.isdigit():
-        num_test_samples = int(data_split)
+def train_val_test_split(samples, labels, data_split):
+    train_ratio, validation_ratio, test_ratio = data_split
 
-    else:
-        test_ratio = float(data_split)
-        num_samples, *_ = samples.shape
-        num_test_samples = int(np.ceil(test_ratio * num_samples))
+    num_samples, *_ = samples.shape
+    num_train_samples = int(np.ceil(train_ratio * num_samples))
+    num_validation_samples = int(np.ceil(validation_ratio * num_samples))
 
-    train_data = samples[:-num_test_samples]
-    train_labels = labels[:-num_test_samples]
+    train_data = samples[:num_train_samples]
+    train_labels = labels[:num_train_samples]
 
-    test_data = samples[-num_test_samples:]
-    test_labels = labels[-num_test_samples:]
+    validation_data = samples[num_train_samples:num_train_samples+num_validation_samples]
+    validation_labels = labels[num_train_samples:num_train_samples+num_validation_samples]
 
-    return train_data, train_labels, test_data, test_labels
+    test_data = samples[num_train_samples+num_validation_samples:]
+    test_labels = labels[num_train_samples+num_validation_samples:]
+
+    return train_data, train_labels, validation_data, validation_labels, test_data, test_labels
 
 
 def turn_into_batches(samples, labels, batch_size):
