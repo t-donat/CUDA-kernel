@@ -6,23 +6,24 @@ def initialize_weights(num_neurons, num_input_channels, num_output_channels,
                        threshold_voltage, initial_membrane_time_constant):
     # normalized Xavier initializtion
     input_weights_limit = np.sqrt(6) / np.sqrt(num_neurons + num_input_channels)
-    input_weights = np.random.uniform(-input_weights_limit, input_weights_limit, size=(num_neurons, num_input_channels))
+    input_weights = np.random.uniform(-input_weights_limit, input_weights_limit,
+                                      size=(num_neurons, num_input_channels)).astype(np.float32)
 
     recurrent_weights_limit = np.sqrt(6) / np.sqrt(num_neurons + num_neurons)
     recurrent_weights = np.random.uniform(-recurrent_weights_limit, recurrent_weights_limit,
-                                          size=(num_neurons, num_neurons))
+                                          size=(num_neurons, num_neurons)).astype(np.float32)
     np.fill_diagonal(recurrent_weights, - threshold_voltage)
 
     output_weights_limit = np.sqrt(6) / np.sqrt(num_output_channels + num_neurons)
     output_weights = np.random.uniform(-output_weights_limit, output_weights_limit,
-                                       size=(num_output_channels, num_neurons))
+                                       size=(num_output_channels, num_neurons)).astype(np.float32)
 
-    membrane_decay_factors = np.ones((num_neurons, 1)) * initial_membrane_time_constant
+    membrane_membrane_time_constants = (np.ones((num_neurons, 1)) * initial_membrane_time_constant).astype(np.float32)
 
-    return input_weights, recurrent_weights, output_weights, membrane_decay_factors
+    return input_weights, recurrent_weights, output_weights, membrane_membrane_time_constants
 
 
-def initialize_data(num_time_steps, num_batches, num_input_channels, start_value, end_value):
+def initialize_data(num_time_steps, num_batches, num_input_channels, start_value, end_value, add_gaussian=False):
 
     if num_input_channels % 2 != 0:
         num_input_channels += 1
@@ -33,7 +34,12 @@ def initialize_data(num_time_steps, num_batches, num_input_channels, start_value
     time_series_data_batch = np.repeat(time_series_data_batch, int(num_input_channels/2), axis=2).astype(np.single)
     time_series_data_batch = np.repeat(time_series_data_batch, num_batches, axis=1).astype(np.single)
 
-    return time_series_data_batch
+    if add_gaussian:
+        #time_series_data += np.random.normal(0, 0.2, size=time_series_data_batch.shape)
+        time_series_data_batch += np.random.normal(0, 0.1, size=(num_time_steps, 1, num_input_channels))
+
+    time_series_data = time_series_data_batch.astype(np.float32)
+    return time_series_data
 
 
 def convert_to_tensors(input_weights, recurrent_weights, output_weights, time_series_data, membrane_time_constants):
@@ -76,17 +82,22 @@ def python_forward_pass(input_weights, recurrent_weights, membrane_time_constant
 
     expected_voltages = np.zeros((num_time_steps, num_batches, num_neurons))
     expected_activities = np.zeros((num_time_steps, num_batches, num_neurons))
+    all_neuron_components = np.zeros((num_time_steps, num_batches, num_neurons))
     base_activity = np.dot(time_series_data, input_weights.T)
 
     for t in range(num_time_steps):
-        v = membrane_decay_factors.T * v + base_activity[t] + np.dot(z, recurrent_weights.T)
+        current_neuron_component = np.dot(z, recurrent_weights.T)
+        v = membrane_decay_factors.T * v + base_activity[t] + current_neuron_component
+        # v = membrane_decay_factors.T * v + base_activity[t] + np.dot(z, recurrent_weights.T)
+
         z[v >= threshold_voltage] = 1.0
         z[v < threshold_voltage] = 0.0
 
         expected_voltages[t] = v
         expected_activities[t] = z
+        all_neuron_components[t] = current_neuron_component
 
-    return expected_voltages, expected_activities
+    return expected_voltages, expected_activities, base_activity, all_neuron_components
 
 
 def MSE(expected_output, network_output):
@@ -97,7 +108,7 @@ def MSE(expected_output, network_output):
     return np.sum(difference, axis=0) / num_time_steps
 
 
-def spike_gradient(membrane_voltages, threshold_voltage, dampening_factor=0.3):
+def python_spike_gradient(membrane_voltages, threshold_voltage, dampening_factor=0.3):
 
     return dampening_factor * np.maximum(1 - np.abs(membrane_voltages - threshold_voltage) / threshold_voltage, 0.0)
 
@@ -130,7 +141,7 @@ def old_python_backward_pass(time_series_data, resulting_voltages, resulting_act
 
     for time_step in reversed(range(num_time_steps)):
         current_membrane_voltages = resulting_voltages[time_step]
-        spike_gradient_approximate = spike_gradient(current_membrane_voltages, threshold_voltage,
+        spike_gradient_approximate = python_spike_gradient(current_membrane_voltages, threshold_voltage,
                                                     dampening_factor=dampening_factor)
 
         for batch in range(num_batches):
@@ -205,8 +216,8 @@ def python_backward_pass(time_series_data, resulting_voltages, resulting_activat
 
     for time_step in reversed(range(num_time_steps)):
         current_membrane_voltages = resulting_voltages[time_step]
-        spike_gradient_approximate = spike_gradient(current_membrane_voltages, threshold_voltage,
-                                                    dampening_factor=dampening_factor)
+        spike_gradient_approximate = python_spike_gradient(current_membrane_voltages, threshold_voltage,
+                                                           dampening_factor=dampening_factor)
 
         dv_k_dv_j = np.einsum("bn,mn->bmn", spike_gradient_approximate, recurrent_weights) + np.diag(membrane_decay_factors[:, 0])[
                                                                                  None, :, :]

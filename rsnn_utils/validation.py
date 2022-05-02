@@ -23,27 +23,25 @@ def print_voltage_discrepancies(expected_voltages, calculated_voltages):
 
     num_time_steps, num_batches, num_neurons = expected_voltages.shape
 
-    differences = expected_voltages - calculated_voltages[:, 0].reshape(num_time_steps, 1, num_neurons)
-    different_spots = np.invert(np.isclose(expected_voltages, calculated_voltages[:, 0].reshape(num_time_steps,
-                                                                                                1,
-                                                                                                num_neurons)))
+    absolute_differences = np.abs(expected_voltages - calculated_voltages)
+    different_spots = np.invert(np.isclose(expected_voltages, calculated_voltages))
 
-    discrepancy_values = np.abs(differences.transpose(0, 2, 1)[different_spots.transpose(0, 2, 1)])
+    discrepancy_values = absolute_differences[different_spots]
     # to avoid repeating the same difference that is shared across the batches
-    duplicates_removed = discrepancy_values[::num_batches]
+    #duplicates_removed = discrepancy_values[::num_batches]
 
-    orders_of_magnitude = np.floor(np.log10(np.abs(duplicates_removed))).astype(int)
+    orders_of_magnitude = np.floor(np.log10(np.abs(discrepancy_values))).astype(int)
     unique_orders_of_magnitude, magnitude_counts = np.unique(orders_of_magnitude, return_counts=True)
 
-    num_discrepancies = len(duplicates_removed)
-    num_values_per_batch = different_spots[:, 0].size
+    num_discrepancies = np.sum(different_spots)
+    percentage_discrepancies = np.mean(different_spots)
 
     print('Order of Magnitude \tNumber of samples \tPercentage of discrepancies')
     for current_magnitude, current_counts in zip(unique_orders_of_magnitude, magnitude_counts):
         print(f"{current_magnitude} \t\t\t{current_counts} \t\t\t{round(current_counts / num_discrepancies * 100, 2)}%")
 
     print(
-        f"\nTotal number of discrepancies: {num_discrepancies} ({round(num_discrepancies / num_values_per_batch * 100, 2)}% of all values)", )
+        f"\nTotal number of discrepancies: {num_discrepancies} ({round(percentage_discrepancies * 100, 2)}% of all values)")
 
 
 def print_input_weight_discrepancies(expected_weights, calculated_weights):

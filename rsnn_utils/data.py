@@ -148,7 +148,7 @@ def evaluate_model(W_in, W_rec, W_out, tau_membrane,
 
         smoothed_spikes = tf.stack([tf.math.reduce_mean(resulting_activations[i - output_time_window: i], axis=0)
                                     if i >= output_time_window else tf.zeros(shape=[current_batch_size, num_neurons])
-                                    for i in range(num_time_steps)])
+                                    for i in range(1, num_time_steps+1)])
 
         network_output = tf.linalg.matmul(smoothed_spikes, W_out, transpose_b=True)
 
