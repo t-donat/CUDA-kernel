@@ -25,14 +25,14 @@ debug_mode = True
 
 start_value = 0
 end_value = 2 * np.pi
-num_time_steps = 100
+num_time_steps = 1280
 
 dt = (end_value - start_value)/num_time_steps
 initial_membrane_time_constant = 0.02  # 20 ms
 
-num_batches = 1
-num_neurons = 8
-num_input_channels = 2  # data initialization currently only supports 2 channels
+num_batches = 128
+num_neurons = 256
+num_input_channels = 64  # data initialization currently only supports even number of channels channels
 num_output_channels = 1
 
 decay_factor = np.exp(-dt/initial_membrane_time_constant)
@@ -46,18 +46,18 @@ gradient_scaling_factor = 0.3
 
 (input_weights, recurrent_weights,
  output_weights, membrane_time_constants) = initialize_weights(num_neurons, num_input_channels, num_output_channels,
-                                                              threshold_voltage, initial_membrane_time_constant)
+                                                               threshold_voltage, initial_membrane_time_constant)
 
-membrane_time_constants_tensor = tf.convert_to_tensor(membrane_time_constants, dtype=float)
+membrane_time_constants_tensor = tf.convert_to_tensor(membrane_time_constants, dtype=tf.float32)
 
 
 time_series_data = initialize_data(num_time_steps, num_batches, num_input_channels,
-                                   start_value, end_value)
+                                   start_value, end_value, add_gaussian=True)
 
 (input_weights_tensor, recurrent_weights_tensor,
  output_weights_tensor, time_series_data_tensor,
  membrane_time_constants_tensor) = convert_to_tensors(input_weights, recurrent_weights, output_weights,
-                                                     time_series_data, membrane_time_constants)
+                                                      time_series_data, membrane_time_constants)
 
 
 # -------------------------------------------------------------------
@@ -68,7 +68,9 @@ spiking_module = tf.load_op_library("./spiking_network.so")
 
 start = time.time()
 (resulting_voltages_tensor,
- resulting_activations_tensor) = spiking_module.forward_pass(input_weights_tensor,
+ resulting_activations_tensor,
+ all_input_components_tensor,
+ all_neuron_components_tensor) = spiking_module.forward_pass(input_weights_tensor,
                                                              recurrent_weights_tensor,
                                                              membrane_time_constants_tensor,
                                                              time_series_data_tensor,
@@ -85,7 +87,8 @@ resulting_activations = resulting_activations_tensor.numpy().astype(np.single)
 
 start = time.time()
 
-expected_voltages, expected_activations = python_forward_pass(input_weights, recurrent_weights, membrane_time_constants,
+(expected_voltages, expected_activations,
+ python_input_components, python_neuron_components) = python_forward_pass(input_weights, recurrent_weights, membrane_time_constants,
                                                               time_series_data, threshold_voltage, dt)
 
 python_forward_duration = time.time() - start
@@ -269,5 +272,29 @@ if save_data:
     #with open(os.path.join(".",  "data", "gradient_data", "partial_gradients.p"), "wb") as pickle_file:
     #    pickle.dump(partial_dE_dv, pickle_file)
 
+with open("./data/resulting_voltages.p", "wb") as pickle_file:
+    pickle.dump(resulting_voltages, pickle_file)
 
+with open("./data/resulting_activations.p", "wb") as pickle_file:
+    pickle.dump(resulting_activations, pickle_file)
+
+with open("./data/expected_voltages.p", "wb") as pickle_file:
+    pickle.dump(expected_voltages, pickle_file)
+
+with open("./data/expected_activations.p", "wb") as pickle_file:
+    pickle.dump(expected_activations, pickle_file)
+
+with open("./data/cuda_input_components.p", "wb") as pickle_file:
+    pickle.dump(all_input_components_tensor.numpy(), pickle_file)
+
+with open("./data/cuda_neuron_components.p", "wb") as pickle_file:
+    pickle.dump(all_neuron_components_tensor.numpy(), pickle_file)
+
+with open("./data/python_input_components.p", "wb") as pickle_file:
+    pickle.dump(python_input_components, pickle_file)
+
+with open("./data/python_neuron_components.p", "wb") as pickle_file:
+    pickle.dump(python_neuron_components, pickle_file)
+
+print("Done")
 
