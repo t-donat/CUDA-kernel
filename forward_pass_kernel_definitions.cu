@@ -49,30 +49,32 @@ __global__ void FloatMatMulKernel(const int N, const int K, const int M, const f
 __global__ void MembraneVoltageUpdateRule(float* current_membrane_voltages,
                                           const float* current_input_component, const float *current_neuron_component,
                                           const float* membrane_decay_factors,
-                                          const int num_batches, const int num_neurons) {
+                                          const int batch_size, const int num_neurons) {
     // batch index
     int b = blockIdx.x * blockDim.x + threadIdx.x;
     // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int n = blockIdx.y * blockDim.y + threadIdx.y;
     // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
+    int tID = b * num_neurons + n;
 
-    if (tID < num_batches * num_neurons) {
-        current_membrane_voltages[tID] = membrane_decay_factors[j] * current_membrane_voltages[tID] + current_input_component[tID] + current_neuron_component[tID];
+    // if (tID < batch_size * num_neurons) {
+    if ((b < batch_size) && (n < num_neurons)) {
+        current_membrane_voltages[tID] = membrane_decay_factors[n] * current_membrane_voltages[tID] + current_input_component[tID] + current_neuron_component[tID];
     }
 }
 
 __global__ void NeuronActivationUpdateRule(float* neuron_activations,
                                            const float* membrane_voltages, const float v_th,
-                                           const int num_batches, const int num_neurons) {
+                                           const int batch_size, const int num_neurons) {
     // batch index
     int b = blockIdx.x * blockDim.x + threadIdx.x;
     // neuron index
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int n = blockIdx.y * blockDim.y + threadIdx.y;
     // thread ID index used to access data from array
-    int tID = b * num_neurons + j;
+    int tID = b * num_neurons + n;
 
-    if (tID < num_batches * num_neurons) {
+    // if (tID < batch_size * num_neurons) {
+    if ((b < batch_size) && (n < num_neurons)) {
         if (membrane_voltages[tID] < v_th) {
             neuron_activations[tID] = 0.0f;
         }

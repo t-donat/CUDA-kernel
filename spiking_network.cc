@@ -65,19 +65,19 @@ public:
         const Tensor& input_weights = context->input(0); // (num_neurons x num_input_channels)
         const Tensor& recurrent_weights = context->input(1); // (num_neurons x num_neurons)
         const Tensor& membrane_time_constants = context->input(2); // (num_neurons x 1)
-        const Tensor& time_series_data = context->input(3); // (num_time_steps x num_batches x num_input_channels)
+        const Tensor& time_series_data = context->input(3); // (num_time_steps x batch_size x num_input_channels)
 
         // Get the values for the dimensions
         if (debug_mode) { std::cout << "[INFO] Getting dimensions" << std::endl; }
         int num_neurons = static_cast<int>(recurrent_weights.shape().dim_size(0));
         int num_time_steps = static_cast<int>(time_series_data.shape().dim_size(0));
-        int num_batches = static_cast<int>(time_series_data.shape().dim_size(1));
+        int batch_size = static_cast<int>(time_series_data.shape().dim_size(1));
         int num_input_channels = static_cast<int>(time_series_data.shape().dim_size(2));
 
         // Allocate output tensors
         if (debug_mode) { std::cout << "[INFO] Allocation output memory" << std::endl; }
 
-        TensorShape output_shape({num_time_steps, num_batches, num_neurons});
+        TensorShape output_shape({num_time_steps, batch_size, num_neurons});
         Tensor* resulting_voltages = nullptr;
         Tensor* resulting_activations = nullptr;
 
@@ -93,7 +93,7 @@ public:
         Tensor current_input_component , current_neuron_component;
 
         // shape of v and z in each time step
-        TensorShape default_shape({num_batches, num_neurons});
+        TensorShape default_shape({batch_size, num_neurons});
 
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_membrane_voltages));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_neuron_activations));
@@ -108,7 +108,7 @@ public:
 
         /*
          *
-        std::cout << "num_batches: " << num_batches << std::endl;
+        std::cout << "batch_size: " << batch_size << std::endl;
         std::cout << "num_neurons: " << num_neurons << std::endl;
         std::cout << "num_input_channels: " << num_input_channels << std::endl;
         std::cout << "num_time_steps: " << num_time_steps << std::endl;
@@ -119,7 +119,7 @@ public:
         */
 
         ForwardPass forward(forward_cublas_handle,
-                            num_batches,
+                            batch_size,
                             num_neurons, num_input_channels, num_time_steps,
                             threshold_voltage, delta_t);
 
@@ -163,19 +163,19 @@ public:
         // Allocate input tensors and get their contents
         if (debug_mode) { std::cout << "[INFO] Allocating input memory" << std::endl; }
 
-        const Tensor& partial_dE_dv_tensor = context->input(0); // (num_time_steps x num_batches x num_neurons)
+        const Tensor& partial_dE_dv_tensor = context->input(0); // (num_time_steps x batch_size x num_neurons)
         const Tensor& W_rec = context->input(1); // (num_neurons x num_neurons)
         const Tensor& membrane_time_constants = context->input(2); // (num_neurons x 1)
-        const Tensor& time_series_data = context->input(3); // (num_time_steps x num_batches x num_input_channels)
-        const Tensor& resulting_voltages= context->input(4); // (num_time_steps x num_batches x num_input_channels)
-        const Tensor& resulting_activations = context->input(5); // (num_time_steps x num_batches x num_input_channels)
+        const Tensor& time_series_data = context->input(3); // (num_time_steps x batch_size x num_input_channels)
+        const Tensor& resulting_voltages= context->input(4); // (num_time_steps x batch_size x num_input_channels)
+        const Tensor& resulting_activations = context->input(5); // (num_time_steps x batch_size x num_input_channels)
 
         // Get the values for the dimensions
         if (debug_mode) { std::cout << "[INFO] Getting dimensions" << std::endl; }
 
         int num_neurons = static_cast<int>(W_rec.shape().dim_size(0));
         int num_time_steps = static_cast<int>(time_series_data.shape().dim_size(0));
-        int num_batches = static_cast<int>(time_series_data.shape().dim_size(1));
+        int batch_size = static_cast<int>(time_series_data.shape().dim_size(1));
         int num_input_channels = static_cast<int>(time_series_data.shape().dim_size(2));
 
         // Allocate output tensors
@@ -193,7 +193,7 @@ public:
         Tensor* membrane_derivative_progress = nullptr;
 
 
-        TensorShape total_gradients_shape({num_time_steps, num_batches, num_neurons});
+        TensorShape total_gradients_shape({num_time_steps, batch_size, num_neurons});
         Tensor* total_gradients = nullptr;
 
         TensorShape input_weight_components_shape({num_time_steps, num_neurons, num_input_channels});
@@ -226,14 +226,14 @@ public:
         //Tensor input_nan, recurrent_nan;
 
         // The default shape of most matrices in each time step
-        TensorShape default_shape({num_batches, num_neurons});
+        TensorShape default_shape({batch_size, num_neurons});
 
-        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({num_batches, num_input_channels}), &current_input_data));
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({batch_size, num_input_channels}), &current_input_data));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_membrane_voltages));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &next_membrane_voltages));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_neuron_activations));
 
-        //OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({num_batches, num_neurons, num_neurons}), &current_dv_k_dv_j));
+        //OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({batch_size, num_neurons, num_neurons}), &current_dv_k_dv_j));
         //OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_sum_over_k));
 
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_spike_gradient));
@@ -251,7 +251,7 @@ public:
         if (debug_mode) { std::cout << "[INFO] Initializing functor" << std::endl; }
 
         BackwardPass backward(backward_cublas_handle,
-                              num_batches,
+                              batch_size,
                               num_neurons, num_input_channels, num_time_steps,
                               threshold_voltage, delta_t, gradient_scaling_factor);
 

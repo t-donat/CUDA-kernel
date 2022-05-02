@@ -1,7 +1,7 @@
 
 __global__ void SetToValue(float* input_matrix,
                            const float set_value,
-                           const int num_batches, const int num_neurons) {
+                           const int batch_size, const int num_neurons) {
     // batch index
     int b = blockIdx.x * blockDim.x + threadIdx.x;
     // neuron index
@@ -9,7 +9,7 @@ __global__ void SetToValue(float* input_matrix,
     // thread ID index used to access data from array
     int tID = b * num_neurons + j;
 
-    if (tID < num_batches * num_neurons) {
+    if (tID < batch_size * num_neurons) {
         input_matrix[tID] = set_value;
     }
 }
@@ -40,7 +40,7 @@ __global__ void CalculateMembraneDecayFactors(float* membrane_decay_factors,
 
 __global__ void CopyFromInput(float* output_matrix,
                               const float* input_tensor, const int time_step,
-                              const int num_batches, const int num_neurons) {
+                              const int batch_size, const int num_neurons) {
     // batch index
     int b = blockIdx.x * blockDim.x + threadIdx.x;
     // neuron index
@@ -48,15 +48,15 @@ __global__ void CopyFromInput(float* output_matrix,
     // thread ID index used to access data from array
     int tID = b * num_neurons + j;
 
-    if (tID < num_batches * num_neurons) {
-        output_matrix[tID] = input_tensor[num_batches * num_neurons * time_step + tID];
+    if (tID < batch_size * num_neurons) {
+        output_matrix[tID] = input_tensor[batch_size * num_neurons * time_step + tID];
     }
 }
 
 
 __global__ void CopyToOutput(float *result_tensor,
                              const float* input_matrix, const int time_step,
-                             const int num_batches, const int num_neurons) {
+                             const int batch_size, const int num_neurons) {
 
     // batch index
     int b = blockIdx.x * blockDim.x + threadIdx.x;
@@ -65,8 +65,8 @@ __global__ void CopyToOutput(float *result_tensor,
     // thread ID index used to access data from array
     int tID = b * num_neurons + j;
 
-    if (tID < num_batches * num_neurons) {
-        result_tensor[num_batches * num_neurons * time_step + tID] = input_matrix[tID];
+    if (tID < batch_size * num_neurons) {
+        result_tensor[batch_size * num_neurons * time_step + tID] = input_matrix[tID];
     }
 }
 
