@@ -16,22 +16,22 @@ from rsnn_utils.data import evaluate_model, find_indices_of_max_probabilities
 # HYPERPARAMETER RANGES
 # -------------------------------------------------------------------
 
-initial_membrane_time_constant_range = (10/1000, 500/1000)
+initial_membrane_time_constant_range = (650/1000, 1000/1000)  # 7: (400/1000, 800/1000), 8: (650/1000, 1000/1000)
 
-output_time_window_range = (10, 300)  # max. 768
-threshold_voltage_range = (0.8, 1.5)
-expected_firing_rate_range = (0.05, 0.15)
+output_time_window_range = (60, 80)  # max. 768, 7: (60, 100), 8: (60, 80)
+threshold_voltage_range = (1.15, 1.30)  # 7: (1.15, 1.37), 8: (1.15, 1.30)
+expected_firing_rate_range = (0.08, 0.12)  # 7: (0.07, 0.13), 8: (0.08, 0.12)
 
 gradient_scaling_factor = 0.3
 
-learning_rate_range = (1e-3, 5e-3)
-weight_decay_rate_range = (5e-5, 2e-4)
-firing_rate_lambda_range = (100.0, 1_000.0)
-time_constant_lambda_range = (0.01, 100.0)
+learning_rate_range = (1e-3, 1.3e-3)  # 7: (1e-3, 1.5e-3), 8: (1e-3, 1.3e-3)
+weight_decay_rate_range = (2e-5, 7e-5)  # 7: (2e-5, 1e-4), 8: (2e-5, 7e-5)
+firing_rate_lambda_range = (1_300.0, 1_600.0)  # 7: (1_100.0, 1_500.0), 8: (1_300.0, 1_600.0)
+time_constant_lambda_range = (30.0, 60.0)  # 7: (10.0, 50.0), 8: (30.0, 60.0)
 
-network_dropout_rate_range = (0.2, 0.5)
-input_dropout_rate_range = (0.2, 0.5)
-gradient_clipping_value_range = (500, 1_000)
+network_dropout_rate_range = (0.3, 0.4)  # 7: (0.28, 0.4), 8: (0.3, 0.4)
+input_dropout_rate_range = (0.6, 0.9)  # 7: (0.3, 0.4), 8: (0.6, 0.9)
+gradient_clipping_value_range = (350, 500)  # 7: (300, 700), 8: (350, 500)
 
 # -------------------------------------------------------------------
 # CONFIG
@@ -39,6 +39,7 @@ gradient_clipping_value_range = (500, 1_000)
 
 verbose = True
 debug = False
+# python grid_search.py -i ../Data/B_32/ -o ../Results/ -n 64 -e 100 -t 20 -j 28
 
 # -------------------------------------------------------------------
 # GPU SETUP
@@ -52,6 +53,7 @@ for gpu_instance in physical_devices:
 # -------------------------------------------------------------------
 # LOAD IN DATA
 # -------------------------------------------------------------------
+
 
 parser = argparse.ArgumentParser("Train the RSNN")
 parser.add_argument("-i", "--input_dir",
@@ -175,7 +177,7 @@ for current_trial in range(1, num_trials+1):
     input_dropout_rate = np.random.uniform(*input_dropout_rate_range)
     gradient_clipping_value = np.random.uniform(*gradient_clipping_value_range)
 
-    train_time_constants = np.random.uniform() > 0.5  # 50-50 True or False
+    train_time_constants = np.random.uniform() > 0.5  # 7: 50-50
 
     # -------------------------------------------------------------------
     # SAVING THE HYPERPARAMETERS
@@ -288,8 +290,13 @@ for current_trial in range(1, num_trials+1):
                                         if i >= output_time_window else tf.zeros(shape=[current_batch_size, num_neurons])
                                         for i in range(1, num_time_steps+1)])
 
-            network_output = tf.linalg.matmul(smoothed_spikes, W_out, transpose_b=True)
+            # Dropout for W_out
+            will_not_be_dropped = tf.cast(tf.random.uniform(shape=smoothed_spikes.get_shape()) > network_dropout_rate,
+                                          dtype=tf.float32)
+            dropout_corrected_smoothed_spikes = (smoothed_spikes * will_not_be_dropped) / (1 - network_dropout_rate)
 
+            # Network output
+            network_output = tf.linalg.matmul(dropout_corrected_smoothed_spikes, W_out, transpose_b=True)
             softmax_output = tf.math.exp(network_output - tf.math.reduce_max(network_output))
             softmax_output = softmax_output / tf.math.reduce_sum(softmax_output, axis=-1, keepdims=True)
 
@@ -337,7 +344,7 @@ for current_trial in range(1, num_trials+1):
             accuracy_in_epoch.append(batch_accuracy)
 
             # both matrix multiplications are calculated in batches (for each time step)
-            dE_dW_out_components = tf.matmul(dE_dnetwork_output, smoothed_spikes, transpose_a=True)
+            dE_dW_out_components = tf.matmul(dE_dnetwork_output, dropout_corrected_smoothed_spikes, transpose_a=True)
             dE_dW_out = tf.math.reduce_sum(dE_dW_out_components, axis=0)
             dE_dsmoothed_spikes = tf.matmul(dE_dnetwork_output, W_out)
 
@@ -409,7 +416,7 @@ for current_trial in range(1, num_trials+1):
                                                                            validation_samples, validation_labels,
                                                                            rsnn.forward_pass)
 
-            validation_stats["loss"].append(validation_labels)
+            validation_stats["loss"].append(validation_set_loss)
             validation_stats["accuracy"].append(validation_set_accuracy)
 
             if validation_set_accuracy > best_performing_parameters["val_accuracy"]:

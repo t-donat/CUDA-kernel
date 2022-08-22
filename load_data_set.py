@@ -21,10 +21,10 @@ parser.add_argument("-r", "--down_sample_rate",
                     dest="down_sample_rate",
                     help="Rate by which to sample down the data during preprocessing")
 
-parser.add_argument("-p", "--percentile",
-                    type=int, default=2,
-                    dest="percentile",
-                    help="Percentile from the top and bottom to use for normalization")
+#parser.add_argument("-p", "--percentile",
+#                    type=int, default=2,
+#                    dest="percentile",
+#                    help="Percentile from the top and bottom to use for normalization")
 
 parser.add_argument("-s", "--data_split",
                     nargs=3,
@@ -46,7 +46,7 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     target_directory = args.target_directory
     down_sample_rate = args.down_sample_rate
-    normalization_percentile = args.percentile
+    # normalization_percentile = args.percentile
     data_split = args.data_split
 
     if not os.path.isdir(target_directory):
@@ -74,15 +74,13 @@ if __name__ == '__main__':
         *_, new_num_time_steps = all_samples.shape
         hyperparameters["num_time_steps"] = int(new_num_time_steps)
 
-    print("[INFO] Normalizing data")
-    normalized_data, top_limit, bottom_limit = normalize_data(all_samples, normalization_percentile)
-
-    del all_samples
+    # print("[INFO] Normalizing data")
+    # normalized_data, top_limit, bottom_limit = normalize_data(all_samples, normalization_percentile)
 
     print("[INFO] Randomizing data")
-    randomized_samples, randomized_targets = randomize_data(normalized_data, all_targets)
+    randomized_samples, randomized_targets = randomize_data(all_samples, all_targets)
 
-    del normalized_data
+    del all_samples
     del all_targets
 
     print("[INFO] Splitting into train, validation and test sets")
@@ -131,8 +129,8 @@ if __name__ == '__main__':
     del batched_test_labels
 
     hyperparameters["batch_size"] = batch_size
-    hyperparameters["max_normalization_value"] = list(top_limit.flatten())
-    hyperparameters["min_normalization_value"] = list(bottom_limit.flatten())
+    # hyperparameters["max_normalization_value"] = list(top_limit.flatten())
+    # hyperparameters["min_normalization_value"] = list(bottom_limit.flatten())
 
     save_directory = os.path.join(target_directory, "dataset")
     os.makedirs(save_directory, exist_ok=True)
