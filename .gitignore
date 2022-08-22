@@ -9,3 +9,7 @@ test
 cmake-build-debug
 a.out
 maxtrix_kernel.cc
+*.o
+*.so
+data/*
+*/__pycache__/*
