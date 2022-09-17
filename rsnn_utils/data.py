@@ -178,12 +178,3 @@ def evaluate_model(W_in, W_rec, W_out, tau_membrane,
     test_set_loss = np.mean(test_batch_loss)
 
     return test_set_accuracy, test_set_loss
-
-
-def create_confusion_matrix(true_labels, predicted_labels, num_classes):
-    confusion_matrix = np.zeros((num_classes, num_classes))
-
-    for predicted_class, actual_class in zip(predicted_labels, true_labels):
-        confusion_matrix[predicted_class, actual_class] += 1
-
-    return confusion_matrix

@@ -153,10 +153,16 @@ if __name__ == '__main__':
 
     print("Class distribution:")
 
+    class_distribution = {}
+
     for class_cue, class_count in zip(class_cue_conversion_table.keys(), class_counts):
         class_number = class_cue_conversion_table[class_cue]
         class_name = event_annotations[class_cue]
         print(f"Class {class_number} ({class_name}): {class_count}")
+
+        class_distribution[class_name] = int(class_count)
+
+    hyperparameters["class_distribution"] = class_distribution
 
     print(f"\n[INFO] Extracted {np.sum(class_counts)} samples in total")
 
