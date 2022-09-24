@@ -236,10 +236,10 @@ for current_trial in range(1, num_trials+1):
                       "time_constant_loss": []}
 
     best_performing_parameters = {"val_accuracy": 0.0,
-                                  "W_in": W_in,
-                                  "W_rec": W_rec,
-                                  "W_out": W_out,
-                                  "tau_membrane": tau_membrane}
+                                  "W_in": tf.identity(W_in),
+                                  "W_rec": tf.identity(W_rec),
+                                  "W_out": tf.identity(W_out),
+                                  "tau_membrane": tf.identity(tau_membrane)}
 
     validation_stats = {"accuracy": [],
                         "loss": [],
@@ -414,10 +414,10 @@ for current_trial in range(1, num_trials+1):
 
             if validation_set_accuracy > best_performing_parameters["val_accuracy"]:
                 best_performing_parameters["val_accuracy"] = validation_set_accuracy
-                best_performing_parameters["W_in"] = W_in
-                best_performing_parameters["W_rec"] = W_rec
-                best_performing_parameters["W_out"] = W_out
-                best_performing_parameters["tau_membrane"] = tau_membrane
+                best_performing_parameters["W_in"] = tf.identity(W_in)
+                best_performing_parameters["W_rec"] = tf.identity(W_rec)
+                best_performing_parameters["W_out"] = tf.identity(W_out)
+                best_performing_parameters["tau_membrane"] = tf.identity(tau_membrane)
 
         if break_due_to_nan:
             training_stats["break_due_to_nan"] = True
