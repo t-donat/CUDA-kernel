@@ -133,6 +133,67 @@ def evaluate_model(W_in, W_rec, W_out, tau_membrane,
                    test_samples, test_labels,
                    rsnn_forward_pass_function):
 
+    test_batch_loss = []
+
+    all_ground_truth_labels = []
+    all_predicted_labels = []
+
+    num_neurons = W_rec.shape[0]
+    num_samples = 0
+
+    for batch_data, batch_labels in zip(test_samples, test_labels):
+        current_batch_size = batch_data.shape[1]
+
+        resulting_voltages, resulting_activations = rsnn_forward_pass_function(W_in, W_rec, tau_membrane,
+                                                                               batch_data,
+                                                                               threshold_voltage=threshold_voltage,
+                                                                               delta_t=dt)
+
+        smoothed_spikes = tf.stack([tf.math.reduce_mean(resulting_activations[i - output_time_window: i], axis=0)
+                                    if i >= output_time_window else tf.zeros(shape=[current_batch_size, num_neurons])
+                                    for i in range(1, num_time_steps + 1)])
+
+        network_output = tf.linalg.matmul(smoothed_spikes, W_out, transpose_b=True)
+
+        softmax_output = tf.math.exp(network_output - np.max(network_output))
+        softmax_output = softmax_output / tf.math.reduce_sum(softmax_output, axis=-1, keepdims=True)
+
+        indices_with_highest_probability = find_indices_of_max_probabilities(softmax_output)
+        time_step_with_highest_prob_per_sample = indices_with_highest_probability[:, :2]
+        predicted_classes = indices_with_highest_probability[:, 2]
+
+        # LOSS
+        # only need the time and batch index to calculate loss
+        predicted_distribution = tf.gather_nd(softmax_output, time_step_with_highest_prob_per_sample)
+        # 'batch_labels' contains the one hot encoded ground truth
+        ground_truth_distribution = batch_labels
+        batch_cost = (tf.reduce_sum(- ground_truth_distribution * tf.math.log(predicted_distribution)) /
+                      current_batch_size).numpy()
+
+        # ACCURACY
+        ground_truth_classes = tf.where(ground_truth_distribution)[:, 1]
+        batch_accuracy = tf.reduce_mean(tf.cast(predicted_classes == ground_truth_classes, tf.float32)).numpy()
+
+        all_ground_truth_labels.extend(ground_truth_classes.numpy())
+        all_predicted_labels.extend(predicted_classes.numpy())
+
+        num_samples += current_batch_size
+        test_batch_loss.append(batch_cost * current_batch_size)
+
+    test_set_loss = np.sum(test_batch_loss) / num_samples
+
+    all_ground_truth_labels = np.array(all_ground_truth_labels)
+    all_predicted_labels = np.array(all_predicted_labels)
+    test_set_accuracy = np.mean(all_ground_truth_labels == all_predicted_labels)
+
+    return test_set_accuracy, test_set_loss
+
+
+def evaluate_model_old(W_in, W_rec, W_out, tau_membrane,
+                   output_time_window, threshold_voltage, dt, num_time_steps,
+                   test_samples, test_labels,
+                   rsnn_forward_pass_function):
+
     test_batch_accuracies = []
     test_batch_loss = []
 
