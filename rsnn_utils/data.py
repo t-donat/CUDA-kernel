@@ -71,8 +71,11 @@ def train_val_test_split(samples, labels, data_split):
     train_ratio, validation_ratio, test_ratio = data_split
 
     num_samples, *_ = samples.shape
-    num_train_samples = int(np.ceil(train_ratio * num_samples))
-    num_validation_samples = int(np.ceil(validation_ratio * num_samples))
+
+    num_validation_samples = int(np.floor(validation_ratio * num_samples))
+    num_test_samples = int(np.floor(test_ratio * num_samples))
+
+    num_train_samples = num_samples - (num_validation_samples + num_test_samples)
 
     train_data = samples[:num_train_samples]
     train_labels = labels[:num_train_samples]
