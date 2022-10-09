@@ -70,6 +70,8 @@ if __name__ == '__main__':
     explained_variance = args.explained_variance
     data_split = args.data_split
 
+    stratify_data = True
+
     data_set_directory = os.path.join(target_directory, "dataset")
     os.makedirs(data_set_directory, exist_ok=True)
 
@@ -173,7 +175,8 @@ if __name__ == '__main__':
 
     (train_data, train_labels,
      validation_data, validation_labels,
-     test_data, test_labels) = train_val_test_split(randomized_samples, randomized_targets, data_split)
+     test_data, test_labels) = train_val_test_split(randomized_samples, randomized_targets,
+                                                    data_split, stratified=stratify_data)
 
     num_train_samples, *_ = train_data.shape
     print(f"Train: {num_train_samples}")

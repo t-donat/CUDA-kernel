@@ -67,7 +67,7 @@ def sample_down(original_sample, down_sample_rate):
     return down_sampled_data
 
 
-def train_val_test_split(samples, labels, data_split):
+def train_val_test_split(samples, labels, data_split, stratified=False):
     train_ratio, validation_ratio, test_ratio = data_split
 
     num_samples, *_ = samples.shape
@@ -77,14 +77,63 @@ def train_val_test_split(samples, labels, data_split):
 
     num_train_samples = num_samples - (num_validation_samples + num_test_samples)
 
-    train_data = samples[:num_train_samples]
-    train_labels = labels[:num_train_samples]
+    if not stratified:
 
-    validation_data = samples[num_train_samples:num_train_samples+num_validation_samples]
-    validation_labels = labels[num_train_samples:num_train_samples+num_validation_samples]
+        train_data = samples[:num_train_samples]
+        train_labels = labels[:num_train_samples]
 
-    test_data = samples[num_train_samples+num_validation_samples:]
-    test_labels = labels[num_train_samples+num_validation_samples:]
+        validation_data = samples[num_train_samples:num_train_samples+num_validation_samples]
+        validation_labels = labels[num_train_samples:num_train_samples+num_validation_samples]
+
+        test_data = samples[num_train_samples+num_validation_samples:]
+        test_labels = labels[num_train_samples+num_validation_samples:]
+
+    else:
+        _, numeric_labels = np.where(labels)
+
+        num_classes = np.max(numeric_labels) + 1
+
+        train_data = []
+        train_labels = []
+
+        validation_data = []
+        validation_labels = []
+
+        test_data = []
+        test_labels = []
+
+        for i in range(num_classes):
+            samples_of_class = samples[numeric_labels == i]
+            labels_of_class = labels[numeric_labels == i]
+
+            (class_train_data, class_train_labels,
+             class_validation_data, class_validation_labels,
+             class_test_data, class_test_labels) = train_val_test_split(samples_of_class, labels_of_class,
+                                                                        data_split, stratified=False)
+
+            train_data.append(class_train_data)
+            train_labels.append(class_train_labels)
+
+            validation_data.append(class_validation_data)
+            validation_labels.append(class_validation_labels)
+
+            test_data.append(class_test_data)
+            test_labels.append(class_test_labels)
+
+        # Stack up again
+        train_data = np.vstack(train_data)
+        train_labels = np.vstack(train_labels)
+
+        validation_data = np.vstack(validation_data)
+        validation_labels = np.vstack(validation_labels)
+
+        test_data = np.vstack(test_data)
+        test_labels = np.vstack(test_labels)
+
+        # Randomize the data sets again
+        train_data, train_labels = randomize_data(train_data, train_labels)
+        validation_data, validation_labels = randomize_data(validation_data, validation_labels)
+        test_data, test_labels = randomize_data(test_data, test_labels)
 
     return train_data, train_labels, validation_data, validation_labels, test_data, test_labels
 

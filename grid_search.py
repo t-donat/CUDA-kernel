@@ -16,22 +16,22 @@ from rsnn_utils.data import evaluate_model, find_indices_of_max_probabilities
 # HYPERPARAMETER RANGES
 # -------------------------------------------------------------------
 
-initial_membrane_time_constant_range = (800/1000, 950/1000)  # 7: (400/1000, 800/1000), 8: (650/1000, 1000/1000)
+initial_membrane_time_constant_range = (820/1000, 900/1000)  # 7: (400/1000, 800/1000), 8: (650/1000, 1000/1000)
 
-output_time_window_range = (72, 80)  # max. 768, 7: (60, 100), 8: (60, 80)
-threshold_voltage_range = (1.2, 1.3)  # 7: (1.15, 1.37), 8: (1.15, 1.30)
-expected_firing_rate_range = (0.1, 0.11)  # 7: (0.07, 0.13), 8: (0.08, 0.12)
+output_time_window_range = (73, 77)  # max. 768, 7: (60, 100), 8: (60, 80)
+threshold_voltage_range = (1.26, 1.33)  # 7: (1.15, 1.37), 8: (1.15, 1.30)
+expected_firing_rate_range = (0.105, 0.112)  # 7: (0.07, 0.13), 8: (0.08, 0.12)
 
 gradient_scaling_factor = 0.3
 
-learning_rate_range = (5e-4, 1.1e-3)  # 7: (1e-3, 1.5e-3), 8: (1e-3, 1.3e-3), 9: (7e-4, 1.3e-3)
-weight_decay_rate_range = (4e-5, 6e-5)  # 7: (2e-5, 1e-4), 8: (2e-5, 7e-5)
-firing_rate_lambda_range = (1_150.0, 1_325.0)  # 7: (1_100.0, 1_500.0), 8: (1_300.0, 1_600.0)
+learning_rate_range = (6e-4, 9e-4)  # 7: (1e-3, 1.5e-3), 8: (1e-3, 1.3e-3), 9: (7e-4, 1.3e-3)
+weight_decay_rate_range = (4.1e-5, 5.5e-5)  # 7: (2e-5, 1e-4), 8: (2e-5, 7e-5)
+firing_rate_lambda_range = (1_200.0, 1_325.0)  # 7: (1_100.0, 1_500.0), 8: (1_300.0, 1_600.0)
 time_constant_lambda_range = (45.0, 53.0)  # 7: (10.0, 50.0), 8: (30.0, 60.0)
 
-network_dropout_rate_range = (0.34, 0.37)  # 7: (0.28, 0.4), 8: (0.3, 0.4)
-input_dropout_rate_range = (0.76, 0.82)  # 7: (0.3, 0.4), 8: (0.6, 0.9)
-gradient_clipping_value_range = (430, 480)  # 7: (300, 700), 8: (350, 500)
+network_dropout_rate_range = (0.32, 0.37)  # 7: (0.28, 0.4), 8: (0.3, 0.4)
+input_dropout_rate_range = (0.74, 0.8)  # 7: (0.3, 0.4), 8: (0.6, 0.9)
+gradient_clipping_value_range = (430, 500)  # 7: (300, 700), 8: (350, 500)
 
 # -------------------------------------------------------------------
 # CONFIG
