@@ -48,7 +48,7 @@ public:
                     float* dE_dW_in, float* dE_dW_rec, float* dE_dmembrane_time_constants,
                     float* dE_dmembrane_decay_factors,
                     float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations,
-                    float* next_membrane_voltages,
+                    float* next_membrane_voltages, float* next_neuron_activations,
                     float* current_spike_gradient, float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
                     float* dE_dW_in_component, float* dE_dW_rec_component,
                     float* membrane_decay_factors,

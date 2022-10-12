@@ -217,7 +217,8 @@ public:
         // Allocate temporary/intermediate tensors
         if (debug_mode) { std::cout << "[INFO] Allocating temporary memory" << std::endl; }
 
-        Tensor current_input_data, current_membrane_voltages, next_membrane_voltages, current_neuron_activations;
+        Tensor current_input_data, current_membrane_voltages, next_membrane_voltages;
+        Tensor current_neuron_activations, next_neuron_activations;
         Tensor current_spike_gradient, current_partial_dE_dv, previous_total_dE_dv, current_total_dE_dv;
         //Tensor current_dv_k_dv_j, current_sum_over_k;
         Tensor dE_dW_in_component, dE_dW_rec_component;
@@ -232,6 +233,7 @@ public:
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_membrane_voltages));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &next_membrane_voltages));
         OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_neuron_activations));
+        OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &next_neuron_activations));
 
         //OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, TensorShape({batch_size, num_neurons, num_neurons}), &current_dv_k_dv_j));
         //OP_REQUIRES_OK(context, context->allocate_temp(DT_FLOAT, default_shape, &current_sum_over_k));
@@ -261,8 +263,11 @@ public:
         backward(context, context->eigen_gpu_device(),
                  dE_dW_in->flat<float>().data(), dE_dW_rec->flat<float>().data(), dE_dmembrane_time_constants->flat<float>().data(),
                  dE_dmembrane_decay_factors.flat<float>().data(),
-                 current_input_data.flat<float>().data(), current_membrane_voltages.flat<float>().data(), current_neuron_activations.flat<float>().data(), next_membrane_voltages.flat<float>().data(),
-                 current_spike_gradient.flat<float>().data(), current_partial_dE_dv.flat<float>().data(), previous_total_dE_dv.flat<float>().data(), current_total_dE_dv.flat<float>().data(),
+                 current_input_data.flat<float>().data(),
+                 current_membrane_voltages.flat<float>().data(), current_neuron_activations.flat<float>().data(),
+                 next_membrane_voltages.flat<float>().data(), next_neuron_activations.flat<float>().data(),
+                 current_spike_gradient.flat<float>().data(), current_partial_dE_dv.flat<float>().data(),
+                 previous_total_dE_dv.flat<float>().data(), current_total_dE_dv.flat<float>().data(),
                  dE_dW_in_component.flat<float>().data(), dE_dW_rec_component.flat<float>().data(),
                  membrane_decay_factors.flat<float>().data(),
                  time_series_data.flat<float>().data(), resulting_voltages.flat<float>().data(), resulting_activations.flat<float>().data(),

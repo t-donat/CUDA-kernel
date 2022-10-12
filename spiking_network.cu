@@ -152,7 +152,7 @@ BackwardPass::BackwardPass(cublasHandle_t cublas_handle,
 void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                               float* dE_dW_in, float* dE_dW_rec, float* dE_dmembrane_time_constants,
                               float* dE_dmembrane_decay_factors,
-                              float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations, float* next_membrane_voltages,
+                              float* current_input_data, float* current_membrane_voltages, float* current_neuron_activations, float* next_membrane_voltages, float* next_neuron_activations,
                               float* current_spike_gradient, float* current_partial_dE_dv, float* previous_total_dE_dv, float* current_total_dE_dv,
                               float* dE_dW_in_component, float* dE_dW_rec_component,
                               float* membrane_decay_factors,
@@ -219,6 +219,10 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                          resulting_activations, num_time_steps - 1,
                                                                                          batch_size, num_neurons);
 
+    CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_neuron_activations,
+                                                                                         resulting_activations, num_time_steps - 2,
+                                                                                         batch_size, num_neurons);
+
     // At the last time step (t=num_timesteps - 1), the partial gradient is equal to the total gradient
     CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_total_dE_dv,
                                                                                          partial_dE_dv, num_time_steps - 1,
@@ -241,12 +245,22 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                          dE_dW_in_component,
                                                                                          num_neurons, num_input_channels);
     // RECURRENT WEIGHTS
-
+    /*
     cublasSgemm_v2(cublas_handle,
                    CUBLAS_OP_N, CUBLAS_OP_T,
                    num_neurons, num_neurons, batch_size,
                    &alpha,
                    current_neuron_activations, num_neurons,
+                   current_total_dE_dv, num_neurons,
+                   &beta,
+                   dE_dW_rec_component, num_neurons);
+    */
+
+    cublasSgemm_v2(cublas_handle,
+                   CUBLAS_OP_N, CUBLAS_OP_T,
+                   num_neurons, num_neurons, batch_size,
+                   &alpha,
+                   next_neuron_activations, num_neurons,
                    current_total_dE_dv, num_neurons,
                    &beta,
                    dE_dW_rec_component, num_neurons);
@@ -329,6 +343,10 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                              resulting_activations, t,
                                                                                              batch_size, num_neurons);
 
+        CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(next_neuron_activations,
+                                                                                             resulting_activations, t-1,
+                                                                                             batch_size, num_neurons);
+
         CopyFromInput<<<regularKernelGridSize, regularKernelBlockSize, 0, device.stream()>>>(current_partial_dE_dv,
                                                                                              partial_dE_dv, t,
                                                                                              batch_size, num_neurons);
@@ -396,11 +414,22 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                              num_neurons, num_input_channels);
         // RECURRENT WEIGHTS
 
+        /*
         cublasSgemm_v2(cublas_handle,
                    CUBLAS_OP_N, CUBLAS_OP_T,
                    num_neurons, num_neurons, batch_size,
                    &alpha,
                    current_neuron_activations, num_neurons,
+                   current_total_dE_dv, num_neurons,
+                   &beta,
+                   dE_dW_rec_component, num_neurons);
+        */
+
+        cublasSgemm_v2(cublas_handle,
+                   CUBLAS_OP_N, CUBLAS_OP_T,
+                   num_neurons, num_neurons, batch_size,
+                   &alpha,
+                   next_neuron_activations, num_neurons,
                    current_total_dE_dv, num_neurons,
                    &beta,
                    dE_dW_rec_component, num_neurons);
@@ -518,6 +547,7 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
                                                                                              num_neurons, num_input_channels);
     // RECURRENT WEIGHTS
 
+    /*
     cublasSgemm_v2(cublas_handle,
                    CUBLAS_OP_N, CUBLAS_OP_T,
                    num_neurons, num_neurons, batch_size,
@@ -530,6 +560,8 @@ void BackwardPass::operator()(OpKernelContext* ctx, const GPUDevice &device,
     SumUpComponent<<<recurrentWeightsGridSize, regularKernelBlockSize, 0, device.stream()>>>(dE_dW_rec,
                                                                                                  dE_dW_rec_component,
                                                                                                  num_neurons, num_neurons);
+
+     */
 
     // MEMBRANE TIME CONSTANTS
 
