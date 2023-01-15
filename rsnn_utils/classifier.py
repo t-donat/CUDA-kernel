@@ -401,13 +401,16 @@ class ModelHistory:
             metric_value_over_epoch = np.mean(metric_value_per_batch * batch_sizes)
             self.training_stats[metric_name].append(metric_value_over_epoch)
 
+            # reset metric list
+            self.epoch_stats[metric_name] = []
+
 
 class SpikingNeuralNetworkClassifier:
     """TODO: Documentation"""
 
     def __init__(self, input_directory: str, output_directory: str, num_neurons: int,
                  cuda_source_file: Optional[str] = None,
-                 verbose_mode: bool = True, debug_mode: bool = False):
+                 quiet_mode: bool = True, verbose_mode: bool = True, debug_mode: bool = False):
 
         # set up
         self.train_time_constants = True
@@ -432,6 +435,7 @@ class SpikingNeuralNetworkClassifier:
 
         self.optimizer = None
 
+        self.quiet_mode = quiet_mode
         self.verbose_mode = verbose_mode
         self.debug_mode = debug_mode
 
@@ -454,7 +458,9 @@ class SpikingNeuralNetworkClassifier:
                                               weight_decay=self.hp.weight_decay_rate)
 
     def train(self, data_set: DataLoader, num_epochs: int):
-        """TODO: Documentation"""
+        """TODO: Documentation, Debug Mode, Validation Stuff into function"""
+
+        debug_interval = int(np.ceil(num_epochs / 10))
 
         start = time.time()
 
@@ -494,41 +500,21 @@ class SpikingNeuralNetworkClassifier:
                 validation_set_accuracy, validation_set_loss = self.evaluate(data_set.validation_samples,
                                                                              data_set.validation_labels)
 
-                validation_stats["loss"].append(validation_labels)
-                validation_stats["accuracy"].append(validation_set_accuracy)
+                self.model_history.validation_stats["loss"].append(validation_set_loss)
+                self.model_history.validation_stats["accuracy"].append(validation_set_accuracy)
 
-                if validation_set_accuracy > best_performing_parameters["val_accuracy"]:
-                    best_performing_parameters["val_accuracy"] = validation_set_accuracy
-                    best_performing_parameters["W_in"] = W_in
-                    best_performing_parameters["W_rec"] = W_rec
-                    best_performing_parameters["W_out"] = W_out
-                    best_performing_parameters["tau_membrane"] = tau_membrane
+                if validation_set_accuracy > self.model_history.best_performing_parameters["val_accuracy"]:
+                    self.model_history.best_performing_parameters["val_accuracy"] = validation_set_accuracy
+                    self.model_history.best_performing_parameters["W_in"] = tf.identity(self.W_in)
+                    self.model_history.best_performing_parameters["W_rec"] = tf.identity(self.W_rec)
+                    self.model_history.best_performing_parameters["W_out"] = tf.identity(self.W_out)
+                    self.model_history.best_performing_parameters["tau_membrane"] = tf.identity(self.tau_membrane)
 
-            if current_epoch == 1 or current_epoch % debug_interval == 0:
+            if not self.quiet_mode and (current_epoch == 1 or current_epoch % debug_interval == 0):
 
-                rounded_train_loss = round(float(avg_overall_loss), 3)
-                rounded_train_accuracy = round(float(avg_accuracy * 100), 2)
-                print(f"\nEpoch {current_epoch}:")
-                print(f"Train: Loss: {rounded_train_loss}, Accuracy: {rounded_train_accuracy}%")
-
-                if use_validation_set:
-                    rounded_validation_loss = round(float(validation_set_loss), 3)
-                    rounded_validation_accuracy = round(float(validation_set_accuracy * 100), 2)
-                    print(f"Validation: Loss: {rounded_validation_loss}, Accuracy: {rounded_validation_accuracy}%")
-
-                if self.verbose_mode:
-                    print("\nLosses:")
-                    print(f"Cross entropy loss: {avg_cross_entropy_loss}")
-                    print(f"Fire rate loss: {avg_fire_rate_loss}")
-                    print(f"Time constant loss: {avg_time_constant_loss}")
-
-                if self.debug_mode:
-                    print("\nDerivatives:")
-                    print(f"Global norm: {global_norm}")
-                    print(f"W_in norm: {w_in_derivative_norm}")
-                    print(f"W_rec norm: {w_rec_derivative_norm}")
-                    print(f"W_out norm: {w_out_derivative_norm}")
-                    print(f"Tau norm: {tau_derivative_norm}")
+                self._print_update_message(current_epoch,
+                                           self.model_history.training_stats,
+                                           self.model_history.validation_stats)
 
         training_duration = time.time() - start
 
@@ -547,14 +533,42 @@ class SpikingNeuralNetworkClassifier:
 
             predictions.append(predicted_classes)
 
+        predictions = tf.convert_to_tensor(predictions, dtype=tf.int32)
+
         return predictions
 
     def evaluate(self, input_data, input_labels):
         """TODO: Implement"""
 
-        model_predictions = self.predict(input_data)
+        model_predictions = []
+        batch_losses = []
 
-        return 0.0, 0.0
+        for batch_data, batch_labels in zip(input_data, input_labels):
+            current_batch_size = batch_data.shape[1]
+
+            # FORWARD PASS
+            softmax_output = self._forward_pass(batch_data, current_batch_size)
+
+            # EVALUATION
+            time_step_with_highest_prob_per_sample, predicted_classes = self._classify(softmax_output)
+
+            # Loss
+            (overall_loss, cross_entropy_loss,
+             firing_rate_loss, time_constant_loss) = self._calculate_loss(softmax_output,
+                                                                          time_step_with_highest_prob_per_sample,
+                                                                          batch_labels)
+
+            model_predictions.append(predicted_classes)
+            batch_losses.append(overall_loss * current_batch_size)
+
+        model_predictions = tf.convert_to_tensor(model_predictions, dtype=tf.float32)
+        model_predictions = tf.reshape(model_predictions, [-1])
+        ground_truth_labels = tf.reshape(input_labels, [-1])
+
+        accuracy = tf.math.reduce_mean(tf.cast(model_predictions == ground_truth_labels, dtype=tf.float32)).numpy()
+        loss = tf.math.reduce_mean(batch_losses)
+
+        return accuracy, loss
 
     @staticmethod
     def _load_cuda_source_library(cuda_source_file: Optional[str] = None):
@@ -672,12 +686,6 @@ class SpikingNeuralNetworkClassifier:
 
         overall_loss = cross_entropy_loss + firing_rate_loss + time_constant_loss
 
-        # self.epoch_stats = {"accuracy": [],
-        #                     "overall_loss": [],
-        #                     "cross_entropy_loss": [],
-        #                     "fire_rate_loss": [],
-        #                     "time_constant_loss": []}
-        #
         self.model_history.epoch_stats["overall_loss"] = overall_loss
         self.model_history.epoch_stats["cross_entropy_loss"] = cross_entropy_loss
         self.model_history.epoch_stats["fire_rate_loss"] = firing_rate_loss
@@ -687,6 +695,8 @@ class SpikingNeuralNetworkClassifier:
 
         self.cache["predicted_distribution"] = predicted_distribution
         self.cache["actual_firing_rates"] = actual_firing_rates
+
+        return overall_loss, cross_entropy_loss, firing_rate_loss, time_constant_loss
 
     def _calculate_accuracy(self, predicted_classes, ground_truth_distribution):
         """TODO: Documentation"""
@@ -793,3 +803,40 @@ class SpikingNeuralNetworkClassifier:
 
         # time_constants_over_epochs.append(tau_membrane.numpy().flatten())
         # all_global_norms.append(global_norm)
+
+    def _print_update_message(self, current_epoch: int, train_set_metrics: dict, validation_set_metrics: dict) -> None:
+        """TODO: Documentation, Debug Mode"""
+
+        train_set_loss = train_set_metrics["loss"][-1]
+        train_set_accuracy = train_set_metrics["accuracy"][-1]
+
+        rounded_train_loss = round(float(train_set_loss), 3)
+        rounded_train_accuracy = round(float(train_set_accuracy * 100), 2)
+        print(f"\nEpoch {current_epoch}:")
+        print(f"Train: Loss: {rounded_train_loss}, Accuracy: {rounded_train_accuracy}%")
+
+        if validation_set_metrics["loss"] and validation_set_metrics["accuracy"]:
+            validation_set_loss = validation_set_metrics["loss"][-1]
+            validation_set_accuracy = validation_set_metrics["accuracy"][-1]
+
+            rounded_validation_loss = round(float(validation_set_loss), 3)
+            rounded_validation_accuracy = round(float(validation_set_accuracy * 100), 2)
+            print(f"Validation: Loss: {rounded_validation_loss}, Accuracy: {rounded_validation_accuracy}%")
+
+        if self.verbose_mode:
+            cross_entropy_loss = train_set_metrics["cross_entropy_loss"][-1]
+            fire_rate_loss = train_set_metrics["fire_rate_loss"][-1]
+            time_constant_loss = train_set_metrics["time_constant_loss"][-1]
+
+            print("\nLosses:")
+            print(f"Cross entropy loss: {cross_entropy_loss}")
+            print(f"Fire rate loss: {fire_rate_loss}")
+            print(f"Time constant loss: {time_constant_loss}")
+
+        # if self.debug_mode:
+        #     print("\nDerivatives:")
+        #     print(f"Global norm: {global_norm}")
+        #     print(f"W_in norm: {w_in_derivative_norm}")
+        #     print(f"W_rec norm: {w_rec_derivative_norm}")
+        #     print(f"W_out norm: {w_out_derivative_norm}")
+        #     print(f"Tau norm: {tau_derivative_norm}")
