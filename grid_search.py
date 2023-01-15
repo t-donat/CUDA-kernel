@@ -93,6 +93,7 @@ num_epochs = int(arguments.num_epochs)
 num_neurons = int(arguments.num_neurons)
 num_trials = int(arguments.num_trials)
 
+
 with open(os.path.join(input_directory, "train_data_set.p"), "rb") as pickle_file:
     train_data_set = pickle.load(pickle_file)
 

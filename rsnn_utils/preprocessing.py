@@ -65,6 +65,7 @@ def run_preprocessing(raw_data, explained_variance, sampling_rate, down_sample_r
     projected_data = low_rank_projection(no_nan_data, pca_projection_matrix)
 
     sos = butter(2, Wn=[0.3, 3.0], btype="bandpass", fs=sampling_rate, output="sos")
+    # sos = butter(2, Wn=[0.3, 70.0], btype="bandpass", fs=sampling_rate, output="sos")
     processed_data = sosfiltfilt(sos, projected_data)
 
     if down_sample_rate is None:

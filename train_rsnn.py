@@ -334,14 +334,13 @@ for current_epoch in range(1, num_epochs + 1):
         # ACCURACY
         ground_truth_classes = tf.where(ground_truth_distribution)[:, 1]
         batch_accuracy = tf.reduce_mean(tf.cast(predicted_classes == ground_truth_classes, tf.float32)).numpy()
+        accuracy_in_epoch.append(batch_accuracy)
 
         # Backward Pass
         dE_dnetwork_output_values = predicted_distribution - ground_truth_distribution
         dE_dnetwork_output = tf.scatter_nd(time_step_with_highest_prob_per_sample,
                                            dE_dnetwork_output_values,
                                            network_output.get_shape())
-
-        accuracy_in_epoch.append(batch_accuracy)
 
         # both matrix multiplications are calculated in batches (for each time step)
         dE_dW_out_components = tf.matmul(dE_dnetwork_output, smoothed_spikes, transpose_a=True)
