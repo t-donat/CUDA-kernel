@@ -2,17 +2,17 @@ import os
 import numpy as np
 import pickle
 import json
-import argparse
+# import argparse
 import time
-import copy
+# import copy
 # import matplotlib.pyplot as plt
 import tensorflow as tf
 import tensorflow_addons as tfa
 from typing import Any, Union, Optional
 
 from rsnn_utils.rsnn import initialize_weights, calculate_spike_gradient, convert_batch_to_tensors
-from rsnn_utils.data import evaluate_model, find_indices_of_max_probabilities
-from rsnn_utils.utils import check_type
+from rsnn_utils.data import find_indices_of_max_probabilities
+from rsnn_utils.utils import check_type, convert_seconds_to_dhms
 
 
 # arguments = parser.parse_args()
@@ -261,7 +261,8 @@ class ModelHistory:
                                "cross_entropy_loss": [],
                                "fire_rate_loss": [],
                                "time_constant_loss": [],
-                               "break_due_to_nan": False}
+                               "break_due_to_nan": False,
+                               "training_duration": ""}
 
         self.epoch_stats = {"accuracy": [],
                             "overall_loss": [],
@@ -513,8 +514,10 @@ class SpikingNeuralNetworkClassifier:
                 break
 
         training_duration = time.time() - start
+        duration_time_string = convert_seconds_to_dhms(training_duration)
 
-        training_stats["break_due_to_nan"] = break_due_to_nan
+        self.model_history.training_stats["break_due_to_nan"] = self.break_due_to_nan
+        self.model_history.training_stats["training_duration"] = duration_time_string
 
     def predict(self, input_data):
         """TODO: Implement"""

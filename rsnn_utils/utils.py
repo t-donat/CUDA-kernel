@@ -23,3 +23,30 @@ def check_type(parameter: Any, expected_type: Union[type, tuple[type]], paramete
         full_error_message = error_message_part_1 + error_message_part_2
 
         raise TypeError(full_error_message)
+
+
+def convert_seconds_to_dhms(duration_in_seconds: Union[int, float]) -> str:
+    """Convert a number of seconds into a string of days, hours, minutes and seconds
+
+    Args:
+        duration_in_seconds (Union[int, float]): The duration (in seconds) that should be converted into the string
+            format
+
+    Returns:
+        A string containing the equivalent days, hours, minutes and seconds
+
+    """
+
+    # remove decimal points
+    duration_in_seconds = int(duration_in_seconds)
+
+    seconds = duration_in_seconds % 60
+    duration_in_minutes = duration_in_seconds // 60
+
+    minutes = duration_in_minutes % 60
+    duration_in_hours = duration_in_minutes // 60
+
+    hours = duration_in_hours % 24
+    days = duration_in_hours // 24
+
+    return f"{days}-{hours}:{minutes}:{seconds}"
