@@ -1,5 +1,66 @@
 # CUDA-kernel
 
+## branch `snn_implementation`
+New, OOP-based implementation of the RSNN classifier. The CUDA files (denoted by the .cu file extension) contain the source code for the forward and backward pass operations. The C++ files (denoted by the .cc file extension) contain the code excessay to bind together the CUDA operations and the respective Python commands, allowing us to access the former using the latter.
+
+This project was implemented using Python 3.9 and CUDA Toolkit 11.6
+
+### Manual Setup
+After creating a new Python environment (e.g. using Conda), you can set up the necessary dependencies by running:
+
+```
+pip install -r requirements.txt
+```
+
+Next, we'll compile the shared library (a .so file) from the CUDA  and C++ source files using the [nvcc](https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/ "NVCC Documentation") and the [g++](https://gcc.gnu.org/ "GCC Homepage") compilers. The compilation commands are based off of the following [TensorFlow resource](https://www.tensorflow.org/guide/create_op "Create an op | TensorFLow Core"). First off we need to set up the necessary environment variables by copying the following commands into the command line:
+
+```
+TF_CFLAGS=( $(python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_compile_flags()))') )
+TF_LFLAGS=( $(python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_link_flags()))') )
+```
+
+Now we can begin to compile the code. First, we'll compile the CUDA code into an Object file (with an .o extension)
+
+```
+nvcc -std=c++14 -c -o spiking_network.cu.o spiking_network.cu ${TF_CFLAGS[@]} -D GOOGLE_CUDA=1 -x cu -Xcompiler -fPIC --expt-relaxed-constexpr --expt-extended-lambda
+```
+
+In a final step, we compile this new object file with the C++ code to create the shared library containing the operations.
+
+```
+g++ -std=c++14 -shared -o spiking_network.so spiking_network.cc spiking_network.cu.o ${TF_CFLAGS[@]} -fPIC -lcudart -lcublas ${TF_LFLAGS[@]}
+```
+
+### Troubleshooting
+
+#### CUDA Compute Capability
+
+Depending on your hardware, your GPU whose may or may not be supported by your version of the CUDA toolkit. You can look up what CUDA Compute Capability for GPU has on [this page](https://developer.nvidia.com/cuda-gpus "CUDA Compute Capability"). If your CUDA Toolkit version and Compute Capability *are* compatible, the latter may still be deprecated, in which case the nvcc compilation process will terminate successfully, but the generated binary will simply do nothing. 
+
+To solve this, add the following arguments to the nvcc command, substituting the '50' (which stands for Compute Capability 5.0) with your own device's Compute Capability:
+
+```
+-gencode arch=compute_50,code=sm_50
+```
+
+#### CUDA install path
+
+If your CUDA Toolkit isnt installed under the path `/usr/local/lib64`, you'll have to specify its actual path when running the g++ complilation command. In order for the compilation to run smoothly, you need to specify the library folder of your CUDA Toolkit (the `lib64` directory) using the -L flag as well as its include directory (the `include` directory) using the -I flag (this is a capital i). 
+
+For example, these additionaly compilation commands could look like this:
+
+
+```
+-L/usr/local/cuda-11.6/lib64 -I/usr/local/cuda-11.6/include
+```
+
+#### GCC Version
+
+For GCC version starting with 5.2, the CUDA and C++ code can be compiled with C++14 (using the argument `-std=c++14` for the compilation command). Earlier versions only seem to work with  C++11, in which case the argument `-std=c++11` should be used.
+
+## branch `snn_implementation`
+Old implementation of the RSNN classifier and run time tests. In the process of reworking into a more user friendly interface
+
 ## branch `prototype`
 ### `kernel_definitions.cu`
 
