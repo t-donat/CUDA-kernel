@@ -597,7 +597,15 @@ class SpikingNeuralNetworkClassifier:
         if not os.path.exists(cuda_source_file):
             raise FileNotFoundError(f"Could not find shared library at expected path: {cuda_source_file}")
 
-        return tf.load_op_library(cuda_source_file)
+        source_library = tf.load_op_library(cuda_source_file)
+
+        if "forward_pass" not in dir(source_library):
+            raise ValueError(f"Could not find 'forward_pass' op in the shared library at {cuda_source_file}")
+
+        elif "backward_pass" not in dir(source_library):
+            raise ValueError(f"Could not find 'backward_pass' op in the shared library at {cuda_source_file}")
+
+        return source_library
 
     def _initialize_weights(self):
         """TODO: Documentation"""
