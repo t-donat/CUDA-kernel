@@ -497,18 +497,7 @@ class SpikingNeuralNetworkClassifier:
             self.model_history.summarize_epoch(batch_sizes)
 
             if data_set.has_validation_set:
-                validation_set_accuracy, validation_set_loss = self.evaluate(data_set.validation_samples,
-                                                                             data_set.validation_labels)
-
-                self.model_history.validation_stats["loss"].append(validation_set_loss)
-                self.model_history.validation_stats["accuracy"].append(validation_set_accuracy)
-
-                if validation_set_accuracy > self.model_history.best_performing_parameters["val_accuracy"]:
-                    self.model_history.best_performing_parameters["val_accuracy"] = validation_set_accuracy
-                    self.model_history.best_performing_parameters["W_in"] = tf.identity(self.W_in)
-                    self.model_history.best_performing_parameters["W_rec"] = tf.identity(self.W_rec)
-                    self.model_history.best_performing_parameters["W_out"] = tf.identity(self.W_out)
-                    self.model_history.best_performing_parameters["tau_membrane"] = tf.identity(self.tau_membrane)
+                self._evaluate_on_validation_set(data_set.validation_samples, data_set.validation_labels)
 
             if not self.quiet_mode and (current_epoch == 1 or current_epoch % debug_interval == 0):
 
@@ -569,6 +558,21 @@ class SpikingNeuralNetworkClassifier:
         loss = tf.math.reduce_mean(batch_losses)
 
         return accuracy, loss
+
+    def _evaluate_on_validation_set(self, validation_samples, validation_labels):
+        """TODO: Documentation"""
+        
+        validation_set_accuracy, validation_set_loss = self.evaluate(validation_samples, validation_labels)
+
+        self.model_history.validation_stats["loss"].append(validation_set_loss)
+        self.model_history.validation_stats["accuracy"].append(validation_set_accuracy)
+
+        if validation_set_accuracy > self.model_history.best_performing_parameters["val_accuracy"]:
+            self.model_history.best_performing_parameters["val_accuracy"] = validation_set_accuracy
+            self.model_history.best_performing_parameters["W_in"] = tf.identity(self.W_in)
+            self.model_history.best_performing_parameters["W_rec"] = tf.identity(self.W_rec)
+            self.model_history.best_performing_parameters["W_out"] = tf.identity(self.W_out)
+            self.model_history.best_performing_parameters["tau_membrane"] = tf.identity(self.tau_membrane)
 
     @staticmethod
     def _load_cuda_source_library(cuda_source_file: Optional[str] = None):
