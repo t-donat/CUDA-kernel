@@ -260,7 +260,8 @@ class ModelHistory:
                                "overall_loss": [],
                                "cross_entropy_loss": [],
                                "fire_rate_loss": [],
-                               "time_constant_loss": []}
+                               "time_constant_loss": [],
+                               "break_due_to_nan": False}
 
         self.epoch_stats = {"accuracy": [],
                             "overall_loss": [],
@@ -439,6 +440,8 @@ class SpikingNeuralNetworkClassifier:
         self.verbose_mode = verbose_mode
         self.debug_mode = debug_mode
 
+        self.break_due_to_nan = False
+
         self.cache = {"dropout_corrected_activations": None}
 
     @property
@@ -458,9 +461,10 @@ class SpikingNeuralNetworkClassifier:
                                               weight_decay=self.hp.weight_decay_rate)
 
     def train(self, data_set: DataLoader, num_epochs: int):
-        """TODO: Documentation, Debug Mode, Validation Stuff into function"""
+        """TODO: Documentation, Debug Mode"""
 
         debug_interval = int(np.ceil(num_epochs / 10))
+        self.break_due_to_nan = False
 
         start = time.time()
 
@@ -473,26 +477,26 @@ class SpikingNeuralNetworkClassifier:
                 current_batch_size = batch_data.shape[1]
                 batch_sizes.append(current_batch_size)
 
-                # FORWARD PASS
+                # Forward Pass
                 softmax_output = self._forward_pass(batch_data, current_batch_size)
 
-                # EVALUATION
+                # Evaluation
                 time_step_with_highest_prob_per_sample, predicted_classes = self._classify(softmax_output)
-
-                # Loss
                 self._calculate_loss(softmax_output, time_step_with_highest_prob_per_sample, batch_labels)
-
-                # Accuracy
                 self._calculate_accuracy(predicted_classes, batch_labels)
 
-                # BACKWARD PASS
+                # Backward Pass
                 (dE_dW_in, dE_dW_rec,
                  dE_dtau_membrane, dE_dW_out) = self._backward_pass(batch_labels,
                                                                     time_step_with_highest_prob_per_sample,
                                                                     current_batch_size)
 
-                # WEIGHT UPDATE
+                # Weight Update
                 self._update_weights(dE_dW_in, dE_dW_rec, dE_dtau_membrane, dE_dW_out)
+
+                if self.break_due_to_nan:
+                    print(f"Loss turned into NaN at epoch {current_epoch}, batch {batch_number}")
+                    break
 
             self.model_history.summarize_epoch(batch_sizes)
 
@@ -505,7 +509,12 @@ class SpikingNeuralNetworkClassifier:
                                            self.model_history.training_stats,
                                            self.model_history.validation_stats)
 
+            if self.break_due_to_nan:
+                break
+
         training_duration = time.time() - start
+
+        training_stats["break_due_to_nan"] = break_due_to_nan
 
     def predict(self, input_data):
         """TODO: Implement"""
@@ -561,7 +570,7 @@ class SpikingNeuralNetworkClassifier:
 
     def _evaluate_on_validation_set(self, validation_samples, validation_labels):
         """TODO: Documentation"""
-        
+
         validation_set_accuracy, validation_set_loss = self.evaluate(validation_samples, validation_labels)
 
         self.model_history.validation_stats["loss"].append(validation_set_loss)
@@ -707,6 +716,9 @@ class SpikingNeuralNetworkClassifier:
 
         self.cache["predicted_distribution"] = predicted_distribution
         self.cache["actual_firing_rates"] = actual_firing_rates
+
+        if tf.math.is_nan(overall_loss):
+            self.break_due_to_nan = True
 
         return overall_loss, cross_entropy_loss, firing_rate_loss, time_constant_loss
 
