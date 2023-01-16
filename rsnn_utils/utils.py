@@ -3,18 +3,17 @@ from typing import Any, Union
 
 def check_type(parameter: Any, expected_type: Union[type, tuple[type]], parameter_name: str):
 
+    if hasattr(expected_type, "__origin__") and expected_type.__origin__ == Union:
+        # Union, Optional from typing package
+        expected_type = expected_type.__args__
+
     if not isinstance(parameter, expected_type):
 
         if isinstance(expected_type, type):
             message_expected_type = str(expected_type)[8:-2]
 
-        elif isinstance(expected_type, tuple):
+        else:  # if isinstance(expected_type, tuple):
             message_expected_type = ", ".join([str(element)[8:-2] for element in expected_type])
-
-        else:
-            # Union, Optional from typing package
-            individual_types = expected_type.__args__
-            message_expected_type = ", ".join([str(element)[8:-2] for element in individual_types])
 
         message_received_type = str(type(parameter))[8:-2]
 
