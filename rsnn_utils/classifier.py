@@ -63,7 +63,7 @@ class DataLoader:
 
     @train_batch_sizes.setter
     def train_batch_sizes(self, new_train_batch_sizes):
-        check_type(new_train_batch_sizes, int, "train_batch_sizes")
+        check_type(new_train_batch_sizes, list, "train_batch_sizes")
         self._train_batch_sizes = new_train_batch_sizes
 
     @property
@@ -72,7 +72,7 @@ class DataLoader:
 
     @validation_batch_sizes.setter
     def validation_batch_sizes(self, new_validation_batch_sizes):
-        check_type(new_validation_batch_sizes, int, "validation_batch_sizes")
+        check_type(new_validation_batch_sizes, list, "validation_batch_sizes")
         self._validation_batch_sizes = new_validation_batch_sizes
 
     @property
@@ -81,7 +81,7 @@ class DataLoader:
 
     @test_batch_sizes.setter
     def test_batch_sizes(self, new_test_batch_sizes):
-        check_type(new_test_batch_sizes, int, "test_batch_sizes")
+        check_type(new_test_batch_sizes, list, "test_batch_sizes")
         self._test_batch_sizes = new_test_batch_sizes
 
     def _load_data_sets(self):
@@ -178,7 +178,14 @@ class Hyperparameters:
 
     @property
     def hyperparameter_list(self):
-        return [attribute for attribute in self.__dir__() if not attribute.startswith("_")]
+        return [attribute for attribute in self.__dir__()
+                if not attribute.startswith("_")
+                and attribute not in ["complete",
+                                      "load_from_json",
+                                      "save_to_json",
+                                      "define",
+                                      "input_directory",
+                                      "hyperparameter_list"]]
 
     @property
     def complete(self):
@@ -400,11 +407,17 @@ class ModelHistory:
 
         else:
             metric_value_per_batch = np.asarray(self.epoch_stats[metric_name])
-            metric_value_over_epoch = np.mean(metric_value_per_batch * batch_sizes)
+            metric_value_over_epoch = np.sum(metric_value_per_batch * batch_sizes)/np.sum(batch_sizes)
             self.training_stats[metric_name].append(metric_value_over_epoch)
 
-            # reset metric list
-            self.epoch_stats[metric_name] = []
+    def start_epoch(self):
+
+        # reset metric lists
+        self.epoch_stats["accuracy"] = []
+        self.epoch_stats["overall_loss"] = []
+        self.epoch_stats["cross_entropy_loss"] = []
+        self.epoch_stats["fire_rate_loss"] = []
+        self.epoch_stats["time_constant_loss"] = []
 
 
 class SpikingNeuralNetworkClassifier:
@@ -412,18 +425,16 @@ class SpikingNeuralNetworkClassifier:
 
     def __init__(self, input_directory: str, output_directory: str, num_neurons: int,
                  cuda_source_file: Optional[str] = None,
-                 quiet_mode: bool = True, verbose_mode: bool = True, debug_mode: bool = False):
+                 quiet_mode: bool = True, verbose_mode: bool = False, debug_mode: bool = False):
 
         # set up
-        self.train_time_constants = True
-
         self.input_directory = input_directory
         self.output_directory = output_directory
 
         # self.num_neurons = num_neurons
 
         # self.data_set = DataLoader(input_directory)
-        self.hp = Hyperparameters(input_directory)
+        self.hp = Hyperparameters(self.input_directory)
         self.hp.define(num_neurons=num_neurons)
 
         self.model_history = ModelHistory(debug_mode=debug_mode)
@@ -443,19 +454,33 @@ class SpikingNeuralNetworkClassifier:
 
         self.break_due_to_nan = False
 
-        self.cache = {"dropout_corrected_activations": None}
+        self.cache = {"dropout_corrected_activations": None,
+                      "network_output": None,
+                      "smoothed_spikes": None,
+                      "resulting_voltages": None,
+                      "dropout_corrected_batch_data": None,
+                      "predicted_distribution": None,
+                      "actual_firing_rates": None}
 
     @property
     def parameters(self):
         """TODO: Documentation"""
 
-        if self.train_time_constants:
+        if self.hp.train_time_constants is None:
+            raise ValueError("Hyperparameter 'train_time_constants' is still undefined!")
+
+        elif self.hp.train_time_constants:
             return [self.W_in, self.W_rec, self.W_out, self.tau_membrane]
+
         else:
             return [self.W_in, self.W_rec, self.W_out]
 
-    def set_up_training(self):
+    def set_up(self):
         """TODO: Documentation"""
+
+        if not self.hp.complete:
+            raise ValueError("Not all hyperparameters have been defined yet!")
+
         self._initialize_weights()
 
         self.optimizer = tfa.optimizers.AdamW(learning_rate=self.hp.learning_rate,
@@ -472,6 +497,7 @@ class SpikingNeuralNetworkClassifier:
         for current_epoch in range(1, num_epochs + 1):
 
             batch_sizes = []
+            self.model_history.start_epoch()
 
             for batch_number, (batch_data, batch_labels) in enumerate(zip(data_set.train_samples,
                                                                           data_set.train_labels)):
@@ -496,7 +522,7 @@ class SpikingNeuralNetworkClassifier:
                 self._update_weights(dE_dW_in, dE_dW_rec, dE_dtau_membrane, dE_dW_out)
 
                 if self.break_due_to_nan:
-                    print(f"Loss turned into NaN at epoch {current_epoch}, batch {batch_number}")
+                    self._write_to_stdout(f"Loss turned into NaN at epoch {current_epoch}, batch {batch_number}")
                     break
 
             self.model_history.summarize_epoch(batch_sizes)
@@ -506,9 +532,9 @@ class SpikingNeuralNetworkClassifier:
 
             if not self.quiet_mode and (current_epoch == 1 or current_epoch % debug_interval == 0):
 
-                self._print_update_message(current_epoch,
-                                           self.model_history.training_stats,
-                                           self.model_history.validation_stats)
+                self._update_message(current_epoch,
+                                     self.model_history.training_stats,
+                                     self.model_history.validation_stats)
 
             if self.break_due_to_nan:
                 break
@@ -542,6 +568,7 @@ class SpikingNeuralNetworkClassifier:
         """TODO: Implement"""
 
         model_predictions = []
+        ground_truth_labels = []
         batch_losses = []
 
         for batch_data, batch_labels in zip(input_data, input_labels):
@@ -559,15 +586,18 @@ class SpikingNeuralNetworkClassifier:
                                                                           time_step_with_highest_prob_per_sample,
                                                                           batch_labels)
 
+            actual_classes = tf.where(batch_labels)[:, 1]
+
             model_predictions.append(predicted_classes)
+            ground_truth_labels.append(actual_classes)
             batch_losses.append(overall_loss * current_batch_size)
 
-        model_predictions = tf.convert_to_tensor(model_predictions, dtype=tf.float32)
+        model_predictions = tf.convert_to_tensor(model_predictions, dtype=tf.int64)
         model_predictions = tf.reshape(model_predictions, [-1])
-        ground_truth_labels = tf.reshape(input_labels, [-1])
+        ground_truth_labels = tf.reshape(ground_truth_labels, [-1])
 
         accuracy = tf.math.reduce_mean(tf.cast(model_predictions == ground_truth_labels, dtype=tf.float32)).numpy()
-        loss = tf.math.reduce_mean(batch_losses)
+        loss = tf.math.reduce_mean(batch_losses).numpy()
 
         return accuracy, loss
 
@@ -654,7 +684,7 @@ class SpikingNeuralNetworkClassifier:
 
         # Forward Pass
         resulting_voltages, resulting_activations = self.rsnn_forward_pass(self.W_in, self.W_rec, self.tau_membrane,
-                                                                             dropout_corrected_batch_data)
+                                                                           dropout_corrected_batch_data)
         # Network Dropout
         random_distribution = tf.random.uniform(shape=resulting_activations.get_shape())
         will_not_be_dropped = tf.cast(random_distribution > self.hp.network_dropout_rate, dtype=tf.float32)
@@ -710,10 +740,10 @@ class SpikingNeuralNetworkClassifier:
 
         overall_loss = cross_entropy_loss + firing_rate_loss + time_constant_loss
 
-        self.model_history.epoch_stats["overall_loss"] = overall_loss
-        self.model_history.epoch_stats["cross_entropy_loss"] = cross_entropy_loss
-        self.model_history.epoch_stats["fire_rate_loss"] = firing_rate_loss
-        self.model_history.epoch_stats["time_constant_loss"] = time_constant_loss
+        self.model_history.epoch_stats["overall_loss"].append(overall_loss)
+        self.model_history.epoch_stats["cross_entropy_loss"].append(cross_entropy_loss)
+        self.model_history.epoch_stats["fire_rate_loss"].append(firing_rate_loss)
+        self.model_history.epoch_stats["time_constant_loss"].append(time_constant_loss)
 
         # firing_rates_over_epochs.append(actual_firing_rates)
 
@@ -731,7 +761,7 @@ class SpikingNeuralNetworkClassifier:
         ground_truth_classes = tf.where(ground_truth_distribution)[:, 1]
         batch_accuracy = tf.reduce_mean(tf.cast(predicted_classes == ground_truth_classes, tf.float32)).numpy()
 
-        self.model_history.epoch_stats["accuracy"] = batch_accuracy
+        self.model_history.epoch_stats["accuracy"].append(batch_accuracy)
 
     def rsnn_forward_pass(self, W_in, W_rec, tau_membrane, batch_data):
 
@@ -815,7 +845,7 @@ class SpikingNeuralNetworkClassifier:
     def _update_weights(self, dE_dW_in, dE_dW_rec, dE_dtau_membrane, dE_dW_out):
 
         """TODO: Implement"""
-        if self.train_time_constants:
+        if self.hp.train_time_constants:
             gradients = [dE_dW_in, dE_dW_rec, dE_dW_out, dE_dtau_membrane]
         else:
             gradients = [dE_dW_in, dE_dW_rec, dE_dW_out]
@@ -831,16 +861,16 @@ class SpikingNeuralNetworkClassifier:
         # time_constants_over_epochs.append(tau_membrane.numpy().flatten())
         # all_global_norms.append(global_norm)
 
-    def _print_update_message(self, current_epoch: int, train_set_metrics: dict, validation_set_metrics: dict) -> None:
+    def _update_message(self, current_epoch: int, train_set_metrics: dict, validation_set_metrics: dict) -> None:
         """TODO: Documentation, Debug Mode"""
 
-        train_set_loss = train_set_metrics["loss"][-1]
+        train_set_loss = train_set_metrics["overall_loss"][-1]
         train_set_accuracy = train_set_metrics["accuracy"][-1]
 
         rounded_train_loss = round(float(train_set_loss), 3)
         rounded_train_accuracy = round(float(train_set_accuracy * 100), 2)
-        print(f"\nEpoch {current_epoch}:")
-        print(f"Train: Loss: {rounded_train_loss}, Accuracy: {rounded_train_accuracy}%")
+        self._write_to_stdout(f"\nEpoch {current_epoch}:")
+        self._write_to_stdout(f"Train: Loss: {rounded_train_loss}, Accuracy: {rounded_train_accuracy}%")
 
         if validation_set_metrics["loss"] and validation_set_metrics["accuracy"]:
             validation_set_loss = validation_set_metrics["loss"][-1]
@@ -848,17 +878,20 @@ class SpikingNeuralNetworkClassifier:
 
             rounded_validation_loss = round(float(validation_set_loss), 3)
             rounded_validation_accuracy = round(float(validation_set_accuracy * 100), 2)
-            print(f"Validation: Loss: {rounded_validation_loss}, Accuracy: {rounded_validation_accuracy}%")
+
+            message = f"Validation: Loss: {rounded_validation_loss}, Accuracy: {rounded_validation_accuracy}%"
+
+            self._write_to_stdout(message)
 
         if self.verbose_mode:
             cross_entropy_loss = train_set_metrics["cross_entropy_loss"][-1]
             fire_rate_loss = train_set_metrics["fire_rate_loss"][-1]
             time_constant_loss = train_set_metrics["time_constant_loss"][-1]
 
-            print("\nLosses:")
-            print(f"Cross entropy loss: {cross_entropy_loss}")
-            print(f"Fire rate loss: {fire_rate_loss}")
-            print(f"Time constant loss: {time_constant_loss}")
+            self._write_to_stdout("\nLosses:")
+            self._write_to_stdout(f"Cross entropy loss: {cross_entropy_loss}")
+            self._write_to_stdout(f"Fire rate loss: {fire_rate_loss}")
+            self._write_to_stdout(f"Time constant loss: {time_constant_loss}")
 
         # if self.debug_mode:
         #     print("\nDerivatives:")
@@ -867,3 +900,9 @@ class SpikingNeuralNetworkClassifier:
         #     print(f"W_rec norm: {w_rec_derivative_norm}")
         #     print(f"W_out norm: {w_out_derivative_norm}")
         #     print(f"Tau norm: {tau_derivative_norm}")
+
+    def _write_to_stdout(self, message: str) -> None:
+        """TODO: Documentation"""
+
+        if not self.quiet_mode:
+            print(message)
