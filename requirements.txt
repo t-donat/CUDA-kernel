@@ -2,6 +2,7 @@ pathlib
 argparse
 mne
 numpy
+pandas
 scipy
 tensorflow==2.5.0
 tensorflow-addons==0.16.1
