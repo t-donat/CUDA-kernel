@@ -95,9 +95,10 @@ class DataLoader:
 
         train_samples, train_labels = train_data_set
         train_samples_as_tensors, train_batch_sizes = convert_batch_to_tensors(train_samples)
+        train_labels_as_tensors, _ = convert_batch_to_tensors(train_labels)
 
         self.train_samples = train_samples_as_tensors
-        self.train_labels = train_labels
+        self.train_labels = train_labels_as_tensors
 
         # validation set
         val_set_file_path = os.path.join(self.input_directory, "validation_data_set.p")
@@ -111,16 +112,17 @@ class DataLoader:
 
             validation_samples, validation_labels = validation_data_set
             validation_samples_as_tensors, validation_batch_sizes = convert_batch_to_tensors(validation_samples)
+            validation_labels_as_tensors, _ = convert_batch_to_tensors(validation_labels)
 
         else:
             use_validation_set = False
 
             validation_samples_as_tensors = None
-            validation_labels = None
+            validation_labels_as_tensors = None
             validation_batch_sizes = 0
 
         self.validation_samples = validation_samples_as_tensors
-        self.validation_labels = validation_labels
+        self.validation_labels = validation_labels_as_tensors
 
         # test set
         test_set_file_path = os.path.join(self.input_directory, "test_data_set.p")
@@ -131,9 +133,10 @@ class DataLoader:
         test_samples, test_labels = test_data_set
 
         test_samples_as_tensors, test_batch_sizes = convert_batch_to_tensors(test_samples)
+        test_labels_as_tensors, test_batch_sizes = convert_batch_to_tensors(test_labels)
 
         self.test_samples = test_samples_as_tensors
-        self.test_labels = test_labels
+        self.test_labels = test_labels_as_tensors
 
         return (use_validation_set, train_batch_sizes,
                 validation_batch_sizes, test_batch_sizes)
