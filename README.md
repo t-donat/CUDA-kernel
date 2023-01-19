@@ -1,9 +1,9 @@
 # CUDA-kernel
 
-## branch `snn_implementation`
+## branch `main`
 New, OOP-based implementation of the RSNN classifier. The CUDA files (denoted by the .cu file extension) contain the source code for the forward and backward pass operations. The C++ files (denoted by the .cc file extension) contain the code excessay to bind together the CUDA operations and the respective Python commands, allowing us to access the former using the latter.
 
-This project was implemented using Python 3.9 and CUDA Toolkit 11.6
+This project was implemented using Python 3.9 and CUDA Toolkit 11.6. It was developed on GPUs with a CUDA Compute Capability of 6.0, but can also be used with CUDA Compute Capability 5.0.
 
 ### Manual Setup
 After creating a new Python environment (e.g. using Conda), you can set up the necessary dependencies by running:
@@ -58,10 +58,29 @@ For example, these additionaly compilation commands could look like this:
 
 For GCC version starting with 5.2, the CUDA and C++ code can be compiled with C++14 (using the argument `-std=c++14` for the compilation command). Earlier versions only seem to work with  C++11, in which case the argument `-std=c++11` should be used.
 
+### Python Scripts
+
+#### `run_time_test.py`
+A script to compare the run times of a pure Python implementation with the Python/CUDA implementation. 
+
+The 'forward pass' and 'backward pass' operations of both implementations are run repeatedly for multiple different network sizes and their completion time is timed. The results are saved to a .csv file
+
+The user can change the script's behavior by specifying the following parameters/flags:
+* -i, --input_dir: A required parameter that specifies the input directory containing the data that will be used for the run time test
+* -o, --output_dir: A required parameter that specifiesthe output directory to which the .csv file with the results will be saved
+* -n, --network_sizes: Defines the different network sizes for which the run time should be recorded. It is an optional parameter, the default are the sizes 8, 16, 32, 64, 128. 
+* -r, --num_repetitions: Optional parameter that defines the number of data points for the timing of the two operations are collected for each network size. The default is 100
+
+
+
 ## branch `snn_implementation`
+
 Old implementation of the RSNN classifier and run time tests. In the process of reworking into a more user friendly interface
 
+
+
 ## branch `prototype`
+
 ### `kernel_definitions.cu`
 
 This is my first protype for matrix multiplication implemented in CUDA. 
@@ -82,5 +101,7 @@ Unexpectedly, this did not only improve the time required for copying data from 
 <p align="center">
   <img src="./images/mat_mul_inner_comparrison_new.png" width=420" height="400">
 </p>
+
+
 
 ## branch `cutlass`
