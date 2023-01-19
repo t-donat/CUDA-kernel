@@ -97,7 +97,8 @@ def python_forward_pass(input_weights, recurrent_weights, membrane_time_constant
         expected_activities[t] = z
         all_neuron_components[t] = current_neuron_component
 
-    return expected_voltages, expected_activities, base_activity, all_neuron_components
+    return expected_voltages, expected_activities
+    # return expected_voltages, expected_activities, base_activity, all_neuron_components
 
 
 def MSE(expected_output, network_output):
