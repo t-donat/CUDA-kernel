@@ -79,7 +79,6 @@ hyperparameters = {"initial_membrane_time_constant": initial_membrane_time_const
 
 data_set = DataLoader(input_directory)
 
-# TODO: check in numpy or tensorflow array
 sample_batch_for_test = data_set.train_samples[0]
 label_batch_for_test = data_set.train_labels[0]
 
@@ -102,8 +101,8 @@ for current_num_neurons in network_sizes:
 
     for _ in range(num_repetitions):
         # PYTHON
-        python_forward_duration, python_backward_duration = time_python_implementation(sample_batch_for_test,
-                                                                                       label_batch_for_test,
+        python_forward_duration, python_backward_duration = time_python_implementation(sample_batch_for_test.numpy(),
+                                                                                       label_batch_for_test.numpy(),
                                                                                        classifier.W_in.numpy(),
                                                                                        classifier.W_rec.numpy(),
                                                                                        classifier.tau_membrane.numpy(),
