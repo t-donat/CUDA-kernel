@@ -60,6 +60,42 @@ For GCC version starting with 5.2, the CUDA and C++ code can be compiled with C+
 
 ### Python Scripts
 
+#### `create_data_set.py`
+Loads the EEG recordings from the .gdf files, runs the preprocessing pipeline on them and then saves them into the format defined for the RSNN classifier. These .gdf files can be downloaded from the [BNCI Horizon 2020 website](http://bnci-horizon-2020.eu/database/data-sets). Navigate to '26. Attempted arm and hand movements in persons with spinal cord injury', then download the participate runs P01-P10 and extract the zip files.
+
+Preprocessing pipeline:
+* Bandpass filtering ([0.3, 70] Hz, second order, zero-phase Butterworth) of a copy of the EEG recording
+* PCA performed on this copy
+* The principal components explaining 99% of the variance are kept.
+* These components are used to project the original, unfiltered EEG recording into the component space and then back into channel space (low rank projection that gets rid of the remaining 1% of variance, likely to be noise)
+* This projected data is then bandpass filtered ([0.3, 3] Hz, second order, zero-phase Butterworth)
+* Finally, the data is rereferenced to a Common Average Reference (CAR)
+
+Then, the recordings are split into 3 second samples and assigned their attempted movement class: Hand open, supination, pronation, palmar grasp, lateral grasp and rest (equivalent to none of the above) via one-hot encoding. Then, they are separated into train, validation and test sets and or arranged into minibatches. These are then saved to disk.
+
+The user can change the script's behavior by specifying the following parameters/flags:
+* --dest: Specifies the input directory containing the extracted folders of the participants (P01-P10), which in turn each contain the .gdf files of each run. Additionally, the finished data sets will be saved to a subdirectory 'dataset' in this folder
+* -b, --batch_size: The number of samples within each minibatch. Must be an integer, default is 32
+* -r, --down_sample_rate: Factor by which the EEG recordings should be downsampled during preprocessing. Optional, by default no downsampling is performed
+* -v, --explained_variance: Defines how much variance should be explained by the Principal Components kept from the PCA step
+* -s, --data_split: The ratios of how to split the data into train, validation and test data sets. Default values are 0.8, 0.1 and 0.1, respectively.
+
+
+#### `train_rsnn.py`
+A script to train an RSNN classifier. After training, the classifier is evaluated on the validation set (if available) and test set. The model parameters and hyperparameters are then saved to an .hdf5 file.
+
+The user can change the script's behavior by specifying the following parameters/flags:
+* -d, --data_set_path: Specifies the input directory containing the data that will be used for the training. Default is the cwd
+* -o, --output_dir: Specifies the output directory to which the .hdf5 file with the model parameters will be saved. Default is the cwd
+
+The user can run this script with a custom data set, as long as the following points are considered:
+
+* Train and test data sets must be included, the use of a validation set is optional
+* Each data set should consist of a tuple containing two lists, where the first contains the samples and the second the corresponding labels
+* Each element of these lists corresponds to a minibatch
+* Each sample batch should have the dimensions (TxBxI), where T is the number of time steps in the time series, B is the number of samples in a batch and I is the number of features of the time series at every time step.
+* The labels for the samples should be one-hot encoded. Each label batch should therefore have the dimensions (BxO), where B again is the number of samples in a batch and O is the number of output classes. For binary classification or regression, O can be set to 1.
+
 #### `run_time_test.py`
 A script to compare the run times of a pure Python implementation with the Python/CUDA implementation. 
 
@@ -67,11 +103,9 @@ The 'forward pass' and 'backward pass' operations of both implementations are ru
 
 The user can change the script's behavior by specifying the following parameters/flags:
 * -i, --input_dir: A required parameter that specifies the input directory containing the data that will be used for the run time test
-* -o, --output_dir: A required parameter that specifiesthe output directory to which the .csv file with the results will be saved
+* -o, --output_dir: A required parameter that specifies the output directory to which the .csv file with the results will be saved
 * -n, --network_sizes: Defines the different network sizes for which the run time should be recorded. It is an optional parameter, the default are the sizes 8, 16, 32, 64, 128. 
 * -r, --num_repetitions: Optional parameter that defines the number of data points for the timing of the two operations are collected for each network size. The default is 100
-
-
 
 ## branch `snn_implementation`
 
