@@ -2,8 +2,8 @@ import numpy as np
 import tensorflow as tf
 
 
-def initialize_weights(num_neurons, num_input_channels, num_output_channels,
-                       threshold_voltage, initial_membrane_time_constant):
+def randomly_generate_weights(num_neurons, num_input_channels, num_output_channels,
+                              threshold_voltage, initial_membrane_time_constant):
     # normalized Xavier initializtion
     input_weights_limit = np.sqrt(6) / np.sqrt(num_neurons + num_input_channels)
     input_weights = np.random.uniform(-input_weights_limit, input_weights_limit,

@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pickle
 import json
+import h5py
 # import argparse
 import time
 # import copy
@@ -10,7 +11,7 @@ import tensorflow as tf
 import tensorflow_addons as tfa
 from typing import Any, Union, Optional
 
-from rsnn_utils.rsnn import initialize_weights, calculate_spike_gradient, convert_batch_to_tensors
+from rsnn_utils.rsnn import randomly_generate_weights, calculate_spike_gradient, convert_batch_to_tensors
 from rsnn_utils.data import find_indices_of_max_probabilities
 from rsnn_utils.utils import check_type, convert_seconds_to_dhms
 
@@ -179,6 +180,11 @@ class Hyperparameters:
     def dt(self) -> float:
         return 1 / self.sampling_frequency
 
+    @dt.setter
+    def dt(self, new_dt) -> None:
+        # always set the sampling frequency, even if a fixed dt is specified
+        self.sampling_frequency = 1/new_dt
+
     @property
     def hyperparameter_list(self):
         return [attribute for attribute in self.__dir__()
@@ -188,7 +194,8 @@ class Hyperparameters:
                                       "save_to_json",
                                       "define",
                                       "input_directory",
-                                      "hyperparameter_list"]]
+                                      "hyperparameter_list",
+                                      "to_dict"]]
 
     @property
     def complete(self):
@@ -231,6 +238,10 @@ class Hyperparameters:
 
         self.define(**hyperparameters)
 
+    def to_dict(self) -> dict:
+        return {hyperparameter_name: getattr(self, hyperparameter_name)
+                for hyperparameter_name in self.hyperparameter_list}
+
     def save_to_json(self, file_name: Optional[str] = None):
         """Creates a dict of hyperparameter names and values and saves it to disk
 
@@ -243,8 +254,7 @@ class Hyperparameters:
         if file_name is None:
             file_name = "hyperparameters.json"
 
-        hyperparameters = {hyperparameter_name: getattr(self, hyperparameter_name)
-                           for hyperparameter_name in self.hyperparameter_list}
+        hyperparameters = self.to_dict()
 
         with open(file_name, "w") as json_file:
             json.dump(hyperparameters, json_file, indent=4)
@@ -426,13 +436,12 @@ class ModelHistory:
 class SpikingNeuralNetworkClassifier:
     """TODO: Documentation"""
 
-    def __init__(self, input_directory: str, output_directory: str, num_neurons: int,
+    def __init__(self, input_directory: str, num_neurons: int,
                  cuda_source_file: Optional[str] = None,
                  quiet_mode: bool = True, verbose_mode: bool = False, debug_mode: bool = False):
 
         # set up
         self.input_directory = input_directory
-        self.output_directory = output_directory
 
         # self.num_neurons = num_neurons
 
@@ -483,8 +492,6 @@ class SpikingNeuralNetworkClassifier:
 
         if not self.hp.complete:
             raise ValueError("Not all hyperparameters have been defined yet!")
-
-        self._initialize_weights()
 
         self.optimizer = tfa.optimizers.AdamW(learning_rate=self.hp.learning_rate,
                                               weight_decay=self.hp.weight_decay_rate)
@@ -656,24 +663,73 @@ class SpikingNeuralNetworkClassifier:
 
         return source_library
 
-    def _initialize_weights(self):
+    def randomly_initialize_weights(self):
+        (W_in_init, W_rec_init,
+         W_out_init, tau_membrane_init) = randomly_generate_weights(self.hp.num_neurons,
+                                                                    self.hp.num_input_channels,
+                                                                    self.hp.num_classes,
+                                                                    self.hp.threshold_voltage,
+                                                                    self.hp.initial_membrane_time_constant)
+
+        self._initialize_weights(W_in_init, W_rec_init, W_out_init, tau_membrane_init)
+
+    def load_from_hdf5(self, hdf5_file_path: str) -> None:
+
+        if not os.path.exists(hdf5_file_path):
+            raise FileNotFoundError(f"Could not find an hd5f file at {hdf5_file_path}")
+
+        with h5py.File(hdf5_file_path, "r") as file:
+
+            # model weights
+            if "weights" not in file:
+                raise ValueError("Group 'weights' missing from the hdf5-file!")
+
+            weights = file["weights"]
+            W_in = tf.convert_to_tensor(weights["W_in"][:], dtype=tf.float32)
+            W_rec = tf.convert_to_tensor(weights["W_rec"][:], dtype=tf.float32)
+            W_out = tf.convert_to_tensor(weights["W_out"][:], dtype=tf.float32)
+            tau_membrane = tf.convert_to_tensor(weights["tau_membrane"][:], dtype=tf.float32)
+
+            self._initialize_weights(W_in, W_rec, W_out, tau_membrane)
+
+            # model hyperparameters
+            if "hyperparameters" not in file:
+                raise ValueError("Group 'hyperparameters' missing from the hdf5-file!")
+
+            loaded_hyperparameters = {hp_name: hp_value[0]
+                                      for hp_name, hp_value in file["hyperparameters"].items()}
+            self.hp.define(**loaded_hyperparameters)
+
+    def save_to_hdf5(self, hdf5_file_path: str) -> None:
+
+        with h5py.File(hdf5_file_path, "w") as file:
+
+            weights = file.create_group("weights")
+
+            weights.create_dataset("W_in", data=self.W_in)
+            weights.create_dataset("W_rec", data=self.W_rec)
+            weights.create_dataset("W_out", data=self.W_out)
+            weights.create_dataset("tau_membrane", data=self.tau_membrane)
+
+            hyperparameters = file.create_group("hyperparameters")
+
+            model_hyperparameters = self.hp.to_dict()
+            for hp_name, hp_value in model_hyperparameters.items():
+                hyperparameters.create_dataset(hp_name, data=np.array([hp_value]))
+
+    def _initialize_weights(self, W_in, W_rec, W_out, tau_membrane):
         """TODO: Documentation"""
 
-        (W_in_init, W_rec_init,
-         W_out_init, tau_membrane_init) = initialize_weights(self.hp.num_neurons, self.hp.num_input_channels,
-                                                             self.hp.num_classes, self.hp.threshold_voltage,
-                                                             self.hp.initial_membrane_time_constant)
-
         with tf.device("/cpu"):
-            W_in = tf.Variable(W_in_init, dtype=tf.float32)
-            W_rec = tf.Variable(W_rec_init, dtype=tf.float32)
-            W_out = tf.Variable(W_out_init, dtype=tf.float32)
-            tau_membrane = tf.Variable(tau_membrane_init, dtype=tf.float32)
+            self.W_in = tf.Variable(W_in, dtype=tf.float32)
+            self.W_rec = tf.Variable(W_rec, dtype=tf.float32)
+            self.W_out = tf.Variable(W_out, dtype=tf.float32)
+            self.tau_membrane = tf.Variable(tau_membrane, dtype=tf.float32)
 
-        self.W_in = W_in
-        self.W_rec = W_rec
-        self.W_out = W_out
-        self.tau_membrane = tau_membrane
+        # self.W_in = W_in
+        # self.W_rec = W_rec
+        # self.W_out = W_out
+        # self.tau_membrane = tau_membrane
 
     def _forward_pass(self, batch_data, current_batch_size):
         """TODO: Documentation"""
@@ -909,3 +965,14 @@ class SpikingNeuralNetworkClassifier:
 
         if not self.quiet_mode:
             print(message)
+
+    def use_best_performing_parameters(self):
+
+        if self.model_history.best_performing_parameters["W_in"] is not None:
+            self.W_in = tf.identity(self.model_history.best_performing_parameters["W_in"])
+            self.W_rec = tf.identity(self.model_history.best_performing_parameters["W_rec"])
+            self.W_out = tf.identity(self.model_history.best_performing_parameters["W_out"])
+            self.tau_membrane = tf.identity(self.model_history.best_performing_parameters["tau_membrane"])
+
+        else:
+            raise ValueError("The network must be trained first!")
