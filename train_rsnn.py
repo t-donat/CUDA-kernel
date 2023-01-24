@@ -2,61 +2,74 @@ import os
 import argparse
 from rsnn_utils.classifier import SpikingNeuralNetworkClassifier, DataLoader
 
-data_set_path = "../BCI_Data/Data/dataset/B_32"
-output_path = "."
+parser = argparse.ArgumentParser(description='Train an RSNN classifier')
 
-shared_library_path = "./spiking_network.so"
-weights_save_path = os.path.join(output_path, "rsnn_model.hdf5")
+parser.add_argument("-d", "--data_set_path",
+                    dest="data_set_path",
+                    help="Directory to search for the train, val and test data sets")
 
-num_neurons = 128
+parser.add_argument('-o', '--output_path',
+                    dest="output_path",
+                    help="Directory to save the network parameters to after training")
 
-# Set up the network
-data_set = DataLoader(data_set_path)
-classifier = SpikingNeuralNetworkClassifier(data_set_path, num_neurons,
-                                            cuda_source_file=shared_library_path,
-                                            quiet_mode=False)
+if __name__ == "__main__":
+    args = parser.parse_args()
+    data_set_path = args.data_set_path
+    output_path = args.output_path
 
-classifier.hp.define(initial_membrane_time_constant=200/1000,
-                     output_time_window=100,
-                     threshold_voltage=1,
-                     expected_firing_rate=0.2,
-                     gradient_scaling_factor=0.3,
-                     learning_rate=0.001,
-                     weight_decay_rate=0.0001,
-                     firing_rate_lambda=1000.0,
-                     time_constant_lambda=1.0,
-                     network_dropout_rate=0.3,
-                     input_dropout_rate=0.3,
-                     gradient_clipping_value=1_000,
-                     train_time_constants=False)
+    shared_library_path = "./spiking_network.so"
+    weights_save_path = os.path.join(output_path, "rsnn_model.hdf5")
 
-classifier.randomly_initialize_weights()
-classifier.set_up()
+    num_neurons = 128
 
-# Train the network
-classifier.train(data_set, num_epochs=10)
+    # Set up the network
+    data_set = DataLoader(data_set_path)
+    classifier = SpikingNeuralNetworkClassifier(data_set_path, num_neurons,
+                                                cuda_source_file=shared_library_path,
+                                                quiet_mode=False)
 
-# Run on test set
-test_accuracy, test_loss = classifier.evaluate(data_set.test_samples, data_set.test_labels)
+    classifier.hp.define(initial_membrane_time_constant=200/1000,
+                         output_time_window=100,
+                         threshold_voltage=1,
+                         expected_firing_rate=0.2,
+                         gradient_scaling_factor=0.3,
+                         learning_rate=0.001,
+                         weight_decay_rate=0.0001,
+                         firing_rate_lambda=1000.0,
+                         time_constant_lambda=1.0,
+                         network_dropout_rate=0.3,
+                         input_dropout_rate=0.3,
+                         gradient_clipping_value=1_000,
+                         train_time_constants=False)
 
-rounded_test_loss = round(float(test_loss), 3)
-rounded_test_accuracy = round(float(test_accuracy * 100), 2)
+    classifier.randomly_initialize_weights()
+    classifier.set_up()
 
-print("\nEvaluation:")
-print(f"Test: Loss: {rounded_test_loss}, Accuracy: {rounded_test_accuracy}%")
+    # Train the network
+    classifier.train(data_set, num_epochs=10)
 
-print("\nUse the best performing parameters from early stopping:")
-classifier.use_best_performing_parameters()
+    # Run on test set
+    test_accuracy, test_loss = classifier.evaluate(data_set.test_samples, data_set.test_labels)
 
-test_accuracy, test_loss = classifier.evaluate(data_set.test_samples, data_set.test_labels)
+    rounded_test_loss = round(float(test_loss), 3)
+    rounded_test_accuracy = round(float(test_accuracy * 100), 2)
 
-rounded_test_loss = round(float(test_loss), 3)
-rounded_test_accuracy = round(float(test_accuracy * 100), 2)
+    print("\nEvaluation:")
 
-print("\nEvaluation:")
-print(f"Test: Loss: {rounded_test_loss}, Accuracy: {rounded_test_accuracy}%")
+    print("\nUse the parameters from the last epoch:")
+    print(f"Test: Loss: {rounded_test_loss}, Accuracy: {rounded_test_accuracy}%")
 
-print(f"\nSaving weights to {weights_save_path}")
-classifier.save_to_hdf5(weights_save_path)
+    print("\nUse the best performing parameters from early stopping:")
+    classifier.use_best_performing_parameters()
 
-print("Done")
+    test_accuracy, test_loss = classifier.evaluate(data_set.test_samples, data_set.test_labels)
+
+    rounded_test_loss = round(float(test_loss), 3)
+    rounded_test_accuracy = round(float(test_accuracy * 100), 2)
+
+    print(f"Test: Loss: {rounded_test_loss}, Accuracy: {rounded_test_accuracy}%")
+
+    print(f"\nSaving weights to {weights_save_path}")
+    classifier.save_to_hdf5(weights_save_path)
+
+    print("Done")
