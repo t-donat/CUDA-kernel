@@ -13,3 +13,4 @@ maxtrix_kernel.cc
 *.so
 data/*
 */__pycache__/*
+*.hdf5
