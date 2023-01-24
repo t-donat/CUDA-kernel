@@ -67,11 +67,25 @@ The 'forward pass' and 'backward pass' operations of both implementations are ru
 
 The user can change the script's behavior by specifying the following parameters/flags:
 * -i, --input_dir: A required parameter that specifies the input directory containing the data that will be used for the run time test
-* -o, --output_dir: A required parameter that specifiesthe output directory to which the .csv file with the results will be saved
+* -o, --output_dir: A required parameter that specifies the output directory to which the .csv file with the results will be saved
 * -n, --network_sizes: Defines the different network sizes for which the run time should be recorded. It is an optional parameter, the default are the sizes 8, 16, 32, 64, 128. 
 * -r, --num_repetitions: Optional parameter that defines the number of data points for the timing of the two operations are collected for each network size. The default is 100
 
 
+#### `train_rsnn.py`
+A script to train an RSNN classifier. After training, the classifier is evaluated on the validation set (if available) and test set. The model parameters and hyperparameters are then saved to an .hdf5 file.
+
+The user can change the script's behavior by specifying the following parameters/flags:
+* -d, --data_set_path: Specifies the input directory containing the data that will be used for the training. Default is the cwd
+* -o, --output_dir: Specifies the output directory to which the .hdf5 file with the model parameters will be saved. Default is the cwd
+
+The user can run this script with a custom data set, as long as the following points are considered:
+
+* Train and test data sets must be included, the use of a validation set is optional
+* Each data set should consist of a tuple containing two lists, where the first contains the samples and the second the corresponding labels
+* Each element of these lists corresponds to a minibatch
+* Each sample batch should have the dimensions (TxBxI), where T is the number of time steps in the time series, B is the number of samples in a batch and I is the number of features of the time series at every time step.
+* The labels for the samples should be one-hot encoded. Each label batch should therefore have the dimensions (BxO), where B again is the number of samples in a batch and O is the number of output classes. For binary classification or regression, O can be set to 1.
 
 ## branch `snn_implementation`
 
