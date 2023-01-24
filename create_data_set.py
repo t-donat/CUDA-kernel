@@ -10,7 +10,8 @@ from rsnn_utils.preprocessing import extract_data, extract_rest_data
 from rsnn_utils.preprocessing import run_preprocessing
 from rsnn_utils.data import randomize_data, train_val_test_split, turn_into_batches
 
-parser = argparse.ArgumentParser(description='Create a Datasset out of .gdf files')
+parser = argparse.ArgumentParser(description='Create a dataset out of .gdf files')
+
 parser.add_argument("--dest",
                     dest="target_directory",
                     help="Directory to search for .gdf files")
