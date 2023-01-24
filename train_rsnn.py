@@ -4,17 +4,19 @@ from rsnn_utils.classifier import SpikingNeuralNetworkClassifier, DataLoader
 
 parser = argparse.ArgumentParser(description='Train an RSNN classifier')
 
-parser.add_argument("-d", "--data_set_path",
-                    dest="data_set_path",
+parser.add_argument("-d", "--data_path",
+                    dest="data_path",
+                    default=".",
                     help="Directory to search for the train, val and test data sets")
 
-parser.add_argument('-o', '--output_path',
+parser.add_argument("-o", '--output_path',
                     dest="output_path",
+                    default=".",
                     help="Directory to save the network parameters to after training")
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    data_set_path = args.data_set_path
+    data_set_path = args.data_path
     output_path = args.output_path
 
     shared_library_path = "./spiking_network.so"
